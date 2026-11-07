@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import asdict
+from datetime import date as _date
 from datetime import datetime, timedelta, timezone
 
+import httpx
 from pymirea.acs import MireaACS
 from pymirea.schedule import MireaSchedule, Schedule
 from pymirea.sdo import MireaSDO
 
 from .pulse import MireaGrades
 
+logger = logging.getLogger(__name__)
+
 MSK = timezone(timedelta(hours=3))
 ENTITY_KINDS = ("group", "teacher", "classroom")
+_KIND_LABELS = {"group": "групп", "teacher": "преподавателей", "classroom": "аудиторий"}
 _ATTEND_TYPES = {0: "unknown", 1: "absent", 2: "excused", 3: "present"}
 
 _SESSION_EXPIRED_HINTS = ("сессия истек", "перелог", "needs_auth", "401", "cookie")
@@ -25,6 +31,24 @@ class ServiceError(RuntimeError):
 
 class SessionExpired(ServiceError):
     """МИРЭА отвергла сессию."""
+
+
+def friendly_error(exc: BaseException) -> ServiceError:
+    """Понятная ошибка вместо трейса или текста исключения.
+
+    Текст сетевых исключений может содержать адреса SSO с одноразовыми
+    параметрами, поэтому пользователю он не показывается."""
+    if isinstance(exc, ServiceError):
+        return exc
+    if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
+        return ServiceError("МИРЭА не ответила вовремя. Повторите запрос через минуту.")
+    if isinstance(exc, (httpx.HTTPError, OSError)):
+        return ServiceError("Не удалось связаться с сервисами МИРЭА: нет сети или сервис недоступен. Повторите позже.")
+    logger.warning("unexpected %s from MIREA services", type(exc).__name__, exc_info=exc)
+    return ServiceError(
+        "Неожиданный ответ от сервисов МИРЭА — возможно, изменился их интерфейс. "
+        "Повторите позже; если ошибка повторяется, сообщите о ней разработчикам."
+    )
 
 
 def _fail(message: str) -> ServiceError:
@@ -171,7 +195,19 @@ async def _search(sched: MireaSchedule, kind: str, query: str):
     raise ServiceError(f"kind должен быть одним из {ENTITY_KINDS}")
 
 
+def _query(kind: str, query: str | None) -> str:
+    if kind not in ENTITY_KINDS:
+        raise ServiceError(f"kind должен быть одним из {ENTITY_KINDS}")
+    q = " ".join((query or "").split())
+    if not q:
+        raise ServiceError(
+            "Укажите, что искать: название группы («ЭФБО-01-24»), фамилию преподавателя или номер аудитории."
+        )
+    return q
+
+
 async def search(kind: str, query: str) -> list[dict]:
+    query = _query(kind, query)
     sched = MireaSchedule()
     try:
         return [asdict(i) for i in await _search(sched, kind, query)]
@@ -179,15 +215,62 @@ async def search(kind: str, query: str) -> list[dict]:
         await sched.close()
 
 
+def _name_tokens(value: str | None) -> list[str]:
+    return [t for t in re.split(r"[\s.]+", _norm_letters(value)) if t]
+
+
+def _teacher_matches(name: str | None, query: str) -> bool:
+    """«Иванов И. И.», «Иванов Илья Ив» → «Иванов Илья Иванович»: фамилия целиком, остальное — по началу."""
+    cand, q = _name_tokens(name), _name_tokens(query)
+    if not q or len(q) > len(cand) or cand[0] != q[0]:
+        return False
+    return all(c.startswith(t) for c, t in zip(cand[1:], q[1:]))
+
+
+def _pick(found: list, kind: str, query: str):
+    """Выбрать одну сущность; при неоднозначности — ошибка со списком вариантов, а не первый попавшийся."""
+    key = _name_tokens(query)
+    exact = [f for f in found if _name_tokens(f.name) == key]
+    if len(exact) == 1 or (exact and kind != "classroom"):
+        return exact[0]
+    if kind == "teacher" and len(key) > 1:
+        close = [f for f in found if _teacher_matches(f.name, query)]
+        if len(close) == 1:
+            return close[0]
+        found = close or found
+    if kind == "classroom":
+        room, campus = _split_room(query)
+        same_room = [f for f in found if _norm(_split_room(f.name)[0]) == _norm(room)]
+        if campus:
+            same_room = [f for f in same_room if _norm(_split_room(f.name)[1]) == _norm(campus)]
+        if len(same_room) == 1:
+            return same_room[0]
+        found = same_room or found
+    if len(found) == 1:
+        return found[0]
+    names = [f.name for f in found if f.name]
+    shown = "; ".join(names[:10]) + (f" и ещё {len(names) - 10}" if len(names) > 10 else "")
+    if kind == "teacher":
+        hint = "полное ФИО" if len(key) > 1 else "фамилию и инициалы или полное ФИО"
+    else:
+        hint = "точное название"
+    raise ServiceError(
+        f"По запросу «{query}» найдено несколько {_KIND_LABELS[kind]}: {shown}. "
+        f"Уточните запрос — укажите {hint}."
+    )
+
+
 async def fetch_entity(kind: str, query: str) -> Schedule:
+    query = _query(kind, query)
     sched = MireaSchedule()
     try:
-        found = await _search(sched, kind, query)
+        found = [f for f in await _search(sched, kind, query) if f.name]
         if not found:
-            raise ServiceError(f"По запросу «{query}» ничего не найдено ({kind}).")
-        q = query.casefold().strip()
-        exact = [f for f in found if (f.name or "").casefold().strip() == q]
-        pick = exact[0] if exact else found[0]
+            raise ServiceError(
+                f"По запросу «{query}» ничего не найдено ({kind}). Проверьте написание; "
+                "если оно верное, сервис расписания мог быть временно недоступен — повторите позже."
+            )
+        pick = _pick(found, kind, query)
         getter = {
             "group": sched.get_group_schedule,
             "teacher": sched.get_teacher_schedule,
@@ -215,19 +298,33 @@ def _events(schedule: Schedule, start: datetime | None, days: int | None) -> lis
     ]
 
 
-def _start_of(date_from: str | None) -> datetime:
-    if date_from:
+def _start_of(value: str | None, field: str = "date_from") -> datetime:
+    """Полночь указанной даты (или сегодня) по Москве — независимо от часового пояса системы."""
+    raw = (value or "").strip()
+    if raw:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+            raise ServiceError(f"{field} должен быть датой в формате ГГГГ-ММ-ДД, например 2026-11-09 (без времени).")
         try:
-            return datetime.fromisoformat(date_from).replace(tzinfo=MSK)
+            day = _date.fromisoformat(raw)
         except ValueError as e:
-            raise ServiceError("date_from должен быть в формате YYYY-MM-DD") from e
+            raise ServiceError(f"{field}: такой даты нет ({raw}). Формат ГГГГ-ММ-ДД, например 2026-11-09.") from e
+        return datetime(day.year, day.month, day.day, tzinfo=MSK)
     return datetime.now(MSK).replace(hour=0, minute=0, second=0, microsecond=0)
 
 
+def _parse_time(value: str | None, field: str) -> tuple[int, int]:
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})", (value or "").strip())
+    if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+        raise ServiceError(f"{field} должно быть временем в формате ЧЧ:ММ от 00:00 до 23:59, например 10:40.")
+    return int(m.group(1)), int(m.group(2))
+
+
 async def timetable(kind: str, query: str, days: int | None, date_from: str | None) -> dict:
-    result = await fetch_entity(kind, query)
+    if days is not None and int(days) < 0:
+        raise ServiceError("days не может быть отрицательным: укажите число дней (1–180) или 0 — всё расписание.")
     start = _start_of(date_from)
-    days = max(0, min(int(days or 0), 180)) or None
+    result = await fetch_entity(kind, query)
+    days = min(int(days or 0), 180) or None
     return {
         "kind": kind,
         "name": result.entity_name,
@@ -244,8 +341,16 @@ def _split_room(value: str) -> tuple[str, str | None]:
     return (m.group(1), m.group(2).strip()) if m else ((value or "").strip(), None)
 
 
+# Латинские буквы, неотличимые от кириллических: «B-78» с английской раскладки = «В-78».
+_LOOKALIKES = str.maketrans("abcehkmoptxy", "авсенкмортху")
+
+
+def _norm_letters(value: str | None) -> str:
+    return (value or "").casefold().replace("ё", "е").translate(_LOOKALIKES)
+
+
 def _norm(value: str | None) -> str:
-    return (value or "").casefold().replace(" ", "").replace("ё", "е")
+    return _norm_letters(value).replace(" ", "")
 
 
 async def free_rooms(
@@ -254,12 +359,10 @@ async def free_rooms(
     """Свободные аудитории в интервал: проверить конкретные или перечислить все (с фильтром по корпусу)."""
     if rooms and len(rooms) > 50:
         raise ServiceError("Не больше 50 аудиторий за раз.")
-    day = _start_of(date)
-    try:
-        sh, sm = (int(x) for x in start_time.split(":"))
-        eh, em = (int(x) for x in end_time.split(":"))
-    except ValueError as e:
-        raise ServiceError("Время в формате HH:MM") from e
+    day = _start_of(date, "date")
+    sh, sm = _parse_time(start_time, "start_time")
+    eh, em = _parse_time(end_time, "end_time")
+    start_time, end_time = f"{sh:02d}:{sm:02d}", f"{eh:02d}:{em:02d}"
     t0 = day.replace(hour=sh, minute=sm)
     t1 = day.replace(hour=eh, minute=em)
     if t1 <= t0:
@@ -285,7 +388,12 @@ async def free_rooms(
             out.append({"room": raw, "free": ok})
         return {**head, "rooms": out}
 
+    out = {}
     if campus:
+        campuses = sorted({f.get("campus") for f in free if f.get("campus")})
         free = [f for f in free if _norm(f.get("campus")) == _norm(campus)]
+        if not free:
+            # Пустой результат из-за опечатки в корпусе не должен выглядеть как «всё занято».
+            out["available_campuses"] = campuses
     total = len(free)
-    return {**head, "campus": campus, "total_free": total, "free_rooms": free[:300], "truncated": total > 300}
+    return {**head, "campus": campus, "total_free": total, "free_rooms": free[:300], "truncated": total > 300, **out}

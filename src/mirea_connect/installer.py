@@ -80,8 +80,11 @@ def _atomic_write(path: Path, text: str) -> None:
     if path.exists():
         shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)  # Windows: PermissionError, если файл держит другая программа
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _q(value: str) -> str:
@@ -241,16 +244,27 @@ def _openclaw(add: bool) -> bool:
     return True
 
 
+class ConfigError(RuntimeError):
+    """Файл настроек клиента нельзя безопасно изменить автоматически."""
+
+
 def _merge_json(path: Path, add: bool) -> bool:
+    """Добавить/убрать только запись mirea; остальные настройки клиента не трогать.
+
+    Нечитаемый файл не перезаписывается: иначе пользователь потеряет свои серверы."""
     data: dict = {}
+    original = ""
     if path.exists():
+        original = path.read_text(encoding="utf-8-sig")  # Блокнот Windows сохраняет UTF-8 с BOM
         try:
-            data = json.loads(path.read_text(encoding="utf-8") or "{}")
-        except ValueError:
-            backup = path.with_suffix(path.suffix + ".bak")
-            shutil.copy2(path, backup)
-            print(f"  ! {path} не читается как JSON, копия сохранена в {backup}")
-            data = {}
+            data = json.loads(original) if original.strip() else {}
+        except ValueError as e:
+            raise ConfigError(
+                f"файл {path} содержит ошибку JSON (строка {getattr(e, 'lineno', '?')}). "
+                "Исправьте файл или подключите вручную — он оставлен без изменений."
+            ) from e
+    if not isinstance(data, dict) or not isinstance(data.get("mcpServers", {}), dict):
+        raise ConfigError(f"в файле {path} неожиданная структура (mcpServers не объект) — он оставлен без изменений.")
     servers = data.setdefault("mcpServers", {})
     if add:
         cmd = server_command()
@@ -259,10 +273,9 @@ def _merge_json(path: Path, add: bool) -> bool:
         if NAME not in servers:
             return False
         servers.pop(NAME)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+    text = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    if text != original:
+        _atomic_write(path, text)
     return True
 
 
@@ -373,23 +386,30 @@ def install(add: bool = True, mode: str = "auto") -> int:
         selected = found or [PROMPT_CHOICE]
 
     done: list[str] = []
+    failed: list[str] = []
     for name, _, apply in clients:
         if name not in selected:
             continue
         try:
             if apply(add):
                 done.append(name)
+            elif add:  # клиент найден и выбран, но запись не добавлена
+                failed.append(name)
         except Exception as e:  # один сломанный клиент не должен ронять остальные
-            print(f"  ! {name}: {e}")
+            print(f"  ! {name}: {_describe(e)}")
+            failed.append(name)
 
     if done:
         print(("\nПодключено:" if add else "Отключено:"))
         for d in done:
             print(f"  ✓ {d}")
-    elif add and PROMPT_CHOICE not in selected:
-        print("\nНи к одному клиенту подключить не получилось.")
+    if failed:
+        verb = "подключить" if add else "отключить"
+        print(f"\nНе удалось {verb}: {', '.join(failed)}. Причина указана выше; "
+              "закройте эти программы и повторите установку или используйте ручное подключение.")
+    if add and not done and PROMPT_CHOICE not in selected:
         selected.append(PROMPT_CHOICE)
-    elif not add:
+    elif not add and not done and not failed:
         print("Коннектор не был подключён ни к одному клиенту.")
 
     if add and PROMPT_CHOICE in selected:
@@ -402,7 +422,14 @@ def install(add: bool = True, mode: str = "auto") -> int:
         print("Войти в МИРЭА: попросите ассистента «войди в МИРЭА» или выполните `mirea-connect login`.")
         if PROMPT_CHOICE not in selected:
             print("Другой агент или харнесс? `mirea-connect prompt` — промпт, чтобы он подключил коннектор сам.")
-    return 0
+    return 1 if failed else 0
+
+
+def _describe(e: Exception) -> str:
+    if isinstance(e, PermissionError):
+        return (f"нет доступа к {e.filename or 'файлу настроек'} — файл занят или защищён. "
+                "Закройте программу-клиент и повторите.")
+    return str(e) or type(e).__name__
 
 
 def _safe(fn: Callable[[], bool]) -> bool:

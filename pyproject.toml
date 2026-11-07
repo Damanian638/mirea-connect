@@ -12,7 +12,9 @@ license = "MIT"
 authors = [{ name = "Damanian638" }]
 maintainers = [{ name = "Damanian638" }]
 dependencies = [
-    "pymirea @ https://github.com/atomic-pancake-49/pymirea/archive/refs/heads/main.zip",
+    # Закреплённый коммит: коннектор переопределяет внутренние методы pymirea (auth.py, pulse.py),
+    # и любое изменение ветки main могло молча сломать вход. Обновлять осознанно, с прогоном тестов.
+    "pymirea @ https://github.com/atomic-pancake-49/pymirea/archive/b4af5fcfbc6d34bc1986ae8cec2298d95aa7901e.zip",
     "mcp>=2.3,<3",
     "uvicorn>=0.30",
 ]

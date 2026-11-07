@@ -36,8 +36,15 @@ async def _login_terminal(login: str | None) -> int:
     from .auth import MireaAuth
 
     store = _store()
-    login = login or os.environ.get("MIREA_LOGIN") or input("Логин (…@edu.mirea.ru): ").strip()
-    password = getpass.getpass("Пароль (не отображается): ")
+    try:
+        login = login or os.environ.get("MIREA_LOGIN") or input("Логин (…@edu.mirea.ru): ").strip()
+        password = getpass.getpass("Пароль (не отображается): ")
+    except EOFError:
+        print("Вход отменён: нет ввода с терминала.", file=sys.stderr)
+        return 1
+    if not login or not password:
+        print("Введите логин и пароль.", file=sys.stderr)
+        return 1
     auth = MireaAuth()
     try:
         result = await auth.login(login, password)
@@ -46,6 +53,12 @@ async def _login_terminal(login: str | None) -> int:
             result = await auth.complete_2fa(result.challenge, code)
             if result.challenge:
                 print(result.message or "Неверный код, попробуйте ещё раз.")
+    except EOFError:
+        print("Вход отменён: код не введён.", file=sys.stderr)
+        return 1
+    except Exception as e:  # сеть/SSO: без трейса и ссылок с одноразовыми параметрами
+        print(f"Не удалось войти: {S.friendly_error(e)}", file=sys.stderr)
+        return 1
     finally:
         await auth.close()
     if not result.success or not result.cookies:
@@ -92,11 +105,14 @@ def main(argv: list[str] | None = None) -> int:
 
         try:
             return asyncio.run(run_data(args, _store()))
-        except S.ServiceError as e:
-            print(f"Ошибка: {e}", file=sys.stderr)
-            return 1
         except KeyboardInterrupt:
             return 130
+        except BrokenPipeError:  # `mirea-connect timetable … | head` — читатель закрыл канал, это не ошибка МИРЭА
+            sys.stdout = open(os.devnull, "w", encoding="utf-8")
+            return 0
+        except Exception as e:
+            print(f"Ошибка: {S.friendly_error(e)}", file=sys.stderr)
+            return 1
     try:
         if args.cmd == "install":
             from .installer import install

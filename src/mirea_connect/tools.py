@@ -55,6 +55,8 @@ def _guard(source: Source, fn: Callable[..., Awaitable[Any]]) -> Callable[..., A
             raise ToolError(f"МИРЭА отклонила сессию ({e}). {source.relogin_hint}") from e
         except S.ServiceError as e:
             raise ToolError(str(e)) from e
+        except Exception as e:  # сеть, тайм-ауты, изменившийся ответ API — без трейса и URL в ответе
+            raise ToolError(str(S.friendly_error(e))) from e
 
     return wrapper
 
@@ -124,8 +126,10 @@ def register_tools(mcp: Any, source: Source) -> Callable:
     @tool()
     async def timetable(kind: str, query: str, days: int = 7, date_from: str | None = None) -> dict:
         """Публичное расписание группы, преподавателя или аудитории (вход не нужен).
-        kind: group | teacher | classroom; query — название («ЭФБО-01-24», «Иванов И.И.», «А-101»).
-        days — сколько дней показать, начиная с date_from (YYYY-MM-DD, по умолчанию сегодня); 0 — всё."""
+        kind: group | teacher | classroom; query — название («ЭФБО-01-24», «Иванов И.И.», «А-101 (В-78)»).
+        days — сколько дней показать, начиная с date_from (YYYY-MM-DD, по умолчанию сегодня по Москве); 0 — всё.
+        Если под запрос подходят несколько человек или аудиторий, вернётся ошибка со списком вариантов:
+        уточни у пользователя, кого он имел в виду, и повтори запрос с полным названием."""
         return await S.timetable(kind, query, days, date_from)
 
     @tool()
@@ -139,7 +143,8 @@ def register_tools(mcp: Any, source: Source) -> Callable:
         """Свободные аудитории в интервал времени (по расписанию МИРЭА).
         start_time/end_time — HH:MM; date — YYYY-MM-DD, по умолчанию сегодня; campus — корпус («В-78», «С-20», «МП-1»).
         Без rooms вернёт список свободных аудиторий (с фильтром по корпусу); с rooms («А-9», «А-9 (В-78)») —
-        для каждой, свободна ли она."""
+        для каждой, свободна ли она. Если по корпусу ничего не нашлось, available_campuses — корпуса,
+        в которых есть свободные аудитории: проверь, нет ли опечатки в названии корпуса."""
         return await S.free_rooms(rooms, date, start_time, end_time, campus)
 
     return tool

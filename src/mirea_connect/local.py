@@ -13,10 +13,14 @@ import contextlib
 import html
 import json
 import logging
+import os
 import secrets
+import shlex
+import shutil
 import socket
+import subprocess
+import sys
 import time
-import webbrowser
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -31,6 +35,8 @@ from starlette.responses import HTMLResponse, Response
 from starlette.routing import Route
 
 from .auth import MireaAuth
+from .logs import setup_logging
+from .services import ServiceError
 from .sessions import NoSession
 from .tools import BASE_INSTRUCTIONS, LOCAL_ACTION, register_tools
 from .web import _err, _page
@@ -115,6 +121,40 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def _open_browser(url: str) -> bool:
+    """Открыть ссылку, не допуская вывода браузера в stdout.
+
+    ``webbrowser.open`` запускает xdg-open/браузер с унаследованным stdout, а в
+    stdio-режиме это канал JSON-RPC: строка вроде «Opening in existing browser
+    session.» ломает протокол. Поэтому все потоки дочернего процесса — в DEVNULL."""
+    if sys.platform == "win32":
+        os.startfile(url)  # type: ignore[attr-defined]  # ShellExecute, без консольного вывода
+        return True
+    candidates: list[list[str]] = []
+    for entry in filter(None, os.environ.get("BROWSER", "").split(os.pathsep)):
+        cmd = shlex.split(entry)
+        candidates.append([a.replace("%s", url) for a in cmd] if "%s" in entry else [*cmd, url])
+    if sys.platform == "darwin":
+        candidates.append(["open", url])
+    candidates += [["xdg-open", url], ["gio", "open", url]]
+    for cmd in candidates:
+        exe = shutil.which(cmd[0])
+        if not exe:
+            continue
+        try:
+            subprocess.Popen(
+                [exe, *cmd[1:]],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            return True
+        except OSError:
+            continue
+    return False
+
+
 class LocalLogin:
     """Одноразовая страница входа на 127.0.0.1 со случайным секретом в пути."""
 
@@ -130,10 +170,16 @@ class LocalLogin:
         self._login = ""
         self._attempts = 0
         self._started = 0.0
+        self._timers: list[asyncio.TimerHandle] = []
 
     @property
     def running(self) -> bool:
         return self._task is not None and not self._task.done()
+
+    def _schedule_stop(self, delay: float) -> None:
+        # Таймер привязан к этой странице: stop() отменяет его, и он не закроет следующую.
+        loop = asyncio.get_running_loop()
+        self._timers.append(loop.call_later(delay, lambda: asyncio.ensure_future(self.stop())))
 
     async def start(self) -> str:
         if self.running and self.url and time.time() - self._started < LOGIN_PAGE_TTL_S:
@@ -154,18 +200,34 @@ class LocalLogin:
         )
         port = _free_port()
         config = uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, access_log=False, lifespan="off")
-        self._server = _NoSignalServer(config)
-        self._task = asyncio.create_task(self._server.serve())
+        server = self._server = _NoSignalServer(config)
+
+        async def serve() -> None:
+            # uvicorn при ошибке запуска (порт занят) вызывает sys.exit(); SystemExit из задачи
+            # остановил бы event loop и весь MCP-процесс вместе с ним.
+            try:
+                await server.serve()
+            except SystemExit:
+                logger.warning("local login page failed to start")
+
+        self._task = asyncio.create_task(serve())
         self._started = time.time()
-        asyncio.get_running_loop().call_later(LOGIN_PAGE_TTL_S, lambda: asyncio.ensure_future(self.stop()))
-        for _ in range(50):
-            if getattr(self._server, "started", False):
+        self._schedule_stop(LOGIN_PAGE_TTL_S)
+        for _ in range(100):
+            if getattr(server, "started", False) or self._task.done():
                 break
             await asyncio.sleep(0.05)
+        if not getattr(server, "started", False):
+            await self.stop()
+            raise ServiceError("Не удалось открыть страницу входа на этом компьютере. Повторите попытку "
+                               "или выполните в терминале `mirea-connect login`.")
         self.url = f"http://127.0.0.1:{port}{base}"
         return self.url
 
     async def stop(self) -> None:
+        for timer in self._timers:
+            timer.cancel()
+        self._timers.clear()
         if self._auth:
             with contextlib.suppress(Exception):
                 await self._auth.close()
@@ -213,7 +275,7 @@ class LocalLogin:
     def _finish(self, cookies: dict) -> Response:
         self.store.save(cookies, login=self._login)
         self.done.set()
-        asyncio.get_running_loop().call_later(2, lambda: asyncio.ensure_future(self.stop()))
+        self._schedule_stop(2)  # дать браузеру получить страницу «Готово»
         return self._ok()
 
     async def _get(self, request: Request) -> Response:
@@ -280,7 +342,7 @@ def build_local(store: SessionStore | None = None) -> tuple[MCPServer, LocalLogi
         opened = False
         if open_browser:
             with contextlib.suppress(Exception):
-                opened = webbrowser.open(url)
+                opened = _open_browser(url)
         return {
             "url": url,
             "browser_opened": opened,
@@ -291,6 +353,6 @@ def build_local(store: SessionStore | None = None) -> tuple[MCPServer, LocalLogi
 
 
 def run_stdio(store: SessionStore | None = None) -> None:
-    logging.basicConfig(level=logging.WARNING)  # stderr; stdout занят протоколом MCP
+    setup_logging(logging.WARNING)  # stderr без секретов; stdout занят протоколом MCP
     mcp, _ = build_local(store)
     mcp.run("stdio")
