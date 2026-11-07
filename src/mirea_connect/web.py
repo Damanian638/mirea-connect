@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 OTP_TTL_S = 10 * 60
 MAX_ATTEMPTS_PER_REQ = 5
 MAX_LOGINS_PER_IP_PER_10MIN = 10
+# IP берётся из заголовков прокси и может быть подделан, поэтому подбор пароля
+# к одной учётной записи ограничен отдельно — сколько бы запросов авторизации ни создали.
+MAX_LOGINS_PER_ACCOUNT_PER_10MIN = 10
 
 _CSS = """
 :root{--bg:#f6f7f9;--card:#fff;--fg:#14161a;--muted:#5d6470;--line:#dfe3e8;--accent:#1a56db;--accent-fg:#fff;--err:#b42318;--errbg:#fdecea}
@@ -77,6 +80,7 @@ class LoginFlow:
         self._otp: dict[str, _OtpState] = {}
         self._attempts: dict[str, int] = defaultdict(int)
         self._ip_hits: dict[str, deque] = defaultdict(deque)
+        self._account_hits: dict[str, deque] = defaultdict(deque)
         self._lock = asyncio.Lock()
 
     # --- helpers ---
@@ -88,14 +92,21 @@ class LoginFlow:
             or (request.client.host if request.client else "?")
         )
 
-    def _rate_limited(self, ip: str) -> bool:
+    def _rate_limited(self, ip: str, account: str = "") -> bool:
         now = time.time()
-        q = self._ip_hits[ip]
-        while q and now - q[0] > 600:
-            q.popleft()
-        if len(q) >= MAX_LOGINS_PER_IP_PER_10MIN:
+        checks = [(self._ip_hits, ip, MAX_LOGINS_PER_IP_PER_10MIN)]
+        if account:
+            checks.append((self._account_hits, account.strip().casefold(), MAX_LOGINS_PER_ACCOUNT_PER_10MIN))
+        for hits, key, _ in checks:
+            q = hits[key]
+            while q and now - q[0] > 600:
+                q.popleft()
+            if not q:
+                hits.pop(key, None)  # не копить пустые записи
+        if any(len(hits.get(key, ())) >= limit for hits, key, limit in checks):
             return True
-        q.append(now)
+        for hits, key, _ in checks:
+            hits[key].append(now)
         return False
 
     async def _drop_otp(self, req: str) -> None:
@@ -185,7 +196,7 @@ class LoginFlow:
         password = str(form.get("password", ""))
         if not login or not password:
             return self._login_form(req, info, "Введите логин и пароль.", login)
-        if self._rate_limited(self._client_ip(request)):
+        if self._rate_limited(self._client_ip(request), login):
             return self._login_form(req, info, "Слишком много попыток. Подождите 10 минут.", login)
         self._attempts[req] += 1
         if self._attempts[req] > MAX_ATTEMPTS_PER_REQ:

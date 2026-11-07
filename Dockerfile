@@ -6,6 +6,8 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
 RUN pip install .
+# Каталог данных должен принадлежать app: иначе сервер не может создать ключ и базу.
+RUN mkdir -p /data && chown app:app /data
 
 USER app
 ENV HOST=0.0.0.0 PORT=8000 DATA_DIR=/data

@@ -15,6 +15,7 @@ from pymirea import Config, configure
 
 from .config import Settings
 from .db import Database
+from .logs import setup_logging
 from .oauth import SCOPE, MireaOAuthProvider, is_guest
 from .sessions import SessionVault
 from .tools import BASE_INSTRUCTIONS, register_tools
@@ -135,8 +136,18 @@ def serve(host: str | None = None, port: int | None = None, public_url: str | No
     if public_url:
         settings.public_url = public_url.rstrip("/")
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    # httpx на INFO пишет полные URL запросов к sso.mirea.ru — там бывают одноразовые коды.
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    # Адреса SSO с одноразовыми параметрами (из pymirea, uvicorn, исключений) маскируются.
+    setup_logging(logging.INFO)
     logger.info("MIREA Connect: %s (слушаю %s:%s)", settings.mcp_url, settings.host, settings.port)
-    uvicorn.run(make_app(settings), host=settings.host, port=settings.port, proxy_headers=True, forwarded_allow_ips="*")
+    try:
+        app = make_app(settings)
+    except PermissionError as e:
+        logger.error(
+            "Нет прав на запись в каталог данных %s (%s). В Docker каталог должен принадлежать пользователю "
+            "с UID 10001: mkdir -p data && sudo chown 10001:10001 data",
+            settings.data_dir.resolve(), e.filename,
+        )
+        raise SystemExit(1) from None
+    # log_config=None: журналы uvicorn (в том числе access-лог со строкой запроса) идут через тот же фильтр.
+    uvicorn.run(app, host=settings.host, port=settings.port, proxy_headers=True, forwarded_allow_ips="*",
+                log_config=None)
