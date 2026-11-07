@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mirea-connect"
+version = "0.1.0"
+description = "MCP-коннектор к Пульсу и расписанию РТУ МИРЭА (OAuth, self-host)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Damanian638" }]
+maintainers = [{ name = "Damanian638" }]
+dependencies = [
+    "pymirea @ https://github.com/atomic-pancake-49/pymirea/archive/refs/heads/main.zip",
+    "mcp>=2.3,<3",
+    "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pytest-asyncio>=0.23", "respx>=0.20", "ruff>=0.5", "httpx>=0.25", "pyyaml>=6"]
+
+[project.scripts]
+mirea-connect = "mirea_connect.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Damanian638/mirea-connect"
+Repository = "https://github.com/Damanian638/mirea-connect"
+Issues = "https://github.com/Damanian638/mirea-connect/issues"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mirea_connect"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501", "E741"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

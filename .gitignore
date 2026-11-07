@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+data/
+.env
+.env.*
+!.env.example
+*.bak
+*.log
+.pymirea/
+logs/

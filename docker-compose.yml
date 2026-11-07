@@ -1,0 +1,21 @@
+services:
+  mirea-connect:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  # Публичный HTTPS-адрес без белого IP: `docker compose --profile tunnel up -d`.
+  # Нужен CLOUDFLARE_TUNNEL_TOKEN в .env (см. README).
+  cloudflared:
+    image: cloudflare/cloudflared:2025.8.1
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - mirea-connect
