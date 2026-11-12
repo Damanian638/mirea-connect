@@ -11,9 +11,9 @@ from datetime import datetime, timedelta, timezone
 import httpx
 from pymirea.acs import MireaACS
 from pymirea.schedule import MireaSchedule, Schedule
-from pymirea.sdo import MireaSDO
 
 from .pulse import MireaGrades
+from .sdo import MireaSDO
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +165,12 @@ async def sdo_overview(cookies: dict, *, deadline_limit: int = 50) -> dict:
     finally:
         await api.close()
     if not courses.success and not deadlines.success and not grades.success:
-        raise _fail(courses.message or deadlines.message or grades.message)
+        # Moodle has its own session. Its failure must not revoke Pulse/SSO
+        # credentials through personal()'s SessionExpired handler.
+        raise ServiceError(
+            "СДО не подтвердила доступ. Сессия Пульса сохранена. "
+            + (courses.message or deadlines.message or grades.message or "Не удалось получить данные СДО.")
+        )
     return {
         "courses": [asdict(c) for c in (courses.courses or [])],
         "deadlines": [

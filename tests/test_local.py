@@ -29,6 +29,34 @@ def _text(res) -> str:
     return "".join(getattr(c, "text", "") for c in res.content)
 
 
+async def test_sdo_failure_does_not_delete_pulse_session(store, monkeypatch):
+    from mcp.server.mcpserver.exceptions import ToolError
+    from pymirea.sdo import SdoResult
+
+    class UnavailableSDO:
+        def __init__(self, session_cookies):
+            pass
+
+        async def get_courses(self):
+            return SdoResult(False, "Сессия СДО не найдена. Перелогиньтесь в МИРЭА.")
+
+        async def get_deadlines(self, **kwargs):
+            return await self.get_courses()
+
+        async def get_grades(self, **kwargs):
+            return await self.get_courses()
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(services, "MireaSDO", UnavailableSDO)
+    mcp, _ = build_local(store)
+    store.save({"Pulse.Auth.Cookie": "valid-pulse"}, login="test@edu.mirea.ru")
+    with pytest.raises(ToolError, match="Сессия Пульса сохранена"):
+        await mcp.call_tool("my_sdo", {})
+    assert store.load().cookies["Pulse.Auth.Cookie"] == "valid-pulse"
+
+
 async def test_local_login_page_and_personal_tool(store, monkeypatch):
     ch = AuthChallenge(kind="otp", action_url="https://sso.mirea.ru/x", field_name="otp", hidden_fields={})
 
