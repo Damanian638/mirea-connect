@@ -1,0 +1,1217 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MIREA Schedule Grid & Debugger | РТУ МИРЭА</title>
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+  <style>
+    :root {
+      --bg: #f4f6fa;
+      --card-bg: #ffffff;
+      --border: #e2e8f0;
+      --primary: #1f2a44;
+      --primary-light: #3e5a8a;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --success: #16a34a;
+      --danger: #dc2626;
+      --even-row: #f8fafc;
+      --cell-border: #cbd5e1;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding-bottom: 40px;
+    }
+
+    header {
+      background: var(--primary);
+      color: #fff;
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+    header h1 { font-size: 20px; font-weight: 700; }
+    header .sub { font-size: 13px; color: #94a3b8; margin-top: 2px; }
+
+    .nav-tabs {
+      display: flex;
+      background: #2b3a5c;
+      padding: 0 24px;
+      border-bottom: 1px solid var(--primary-light);
+    }
+    .tab-btn {
+      background: none;
+      border: none;
+      color: #cbd5e1;
+      padding: 12px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      transition: all 0.2s;
+    }
+    .tab-btn:hover { color: #fff; background: rgba(255,255,255,0.05); }
+    .tab-btn.active { color: #fff; border-bottom-color: var(--accent); background: rgba(37,99,235,0.15); }
+
+    .container {
+      max-width: 1360px;
+      margin: 20px auto;
+      padding: 0 16px;
+    }
+
+    .banner-warning {
+      background: #fef3c7;
+      border: 1px solid #fde68a;
+      color: #92400e;
+      padding: 12px 18px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      display: none;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      margin-bottom: 24px;
+    }
+    .card-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--primary);
+      margin-bottom: 16px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    .form-group.full { grid-column: 1 / -1; }
+    label { font-size: 13px; font-weight: 600; color: #334155; }
+    input, select {
+      padding: 9px 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 14px;
+      color: var(--text);
+      background: #fff;
+      outline: none;
+    }
+    input:focus, select:focus { border-color: var(--accent); }
+
+    .toggle-container {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 8px;
+    }
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .toggle-row input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+      accent-color: var(--accent);
+    }
+    .toggle-sub {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-muted);
+      padding-left: 28px;
+    }
+    .badge-auto {
+      font-size: 11px;
+      font-weight: 700;
+      background: #eff6ff;
+      color: var(--accent);
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid #bfdbfe;
+    }
+
+    .presets-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; align-items: center; }
+    .preset-chip {
+      background: #f1f5f9;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 3px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .preset-chip:hover { background: #e2e8f0; color: var(--accent); }
+
+    .actions-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 20px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-success { background: var(--success); color: #fff; }
+    .btn-success:hover { background: #15803d; }
+    .btn-secondary { background: #f1f5f9; color: #334155; border: 1px solid var(--border); }
+    .btn-secondary:hover { background: #e2e8f0; }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    .status-box {
+      margin-top: 16px;
+      padding: 12px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      display: none;
+    }
+    .status-box.info { display: block; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; }
+    .status-box.error { display: block; background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+    .status-box.success { display: block; background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
+
+    .preview-container {
+      overflow-x: auto;
+      border: 1px solid var(--cell-border);
+      border-radius: 8px;
+      margin-top: 20px;
+      background: #fff;
+    }
+    .room-tabs {
+      display: flex;
+      gap: 4px;
+      padding: 8px 8px 0;
+      background: #f8fafc;
+      border-bottom: 1px solid var(--cell-border);
+      overflow-x: auto;
+    }
+    .room-tab-btn {
+      padding: 6px 14px;
+      background: #e2e8f0;
+      border: 1px solid var(--cell-border);
+      border-bottom: none;
+      border-radius: 6px 6px 0 0;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .room-tab-btn.active { background: #fff; color: var(--accent); border-top: 2px solid var(--accent); }
+
+    table.grid-table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 900px; }
+    table.grid-table th, table.grid-table td { border: 1px solid var(--cell-border); padding: 6px 8px; vertical-align: middle; }
+    table.grid-table .day-header { background: #899EC6; color: #fff; font-weight: 700; font-size: 13px; text-align: center; padding: 8px; }
+    table.grid-table .table-header { background: #3E5A8A; color: #fff; font-weight: 700; text-align: center; }
+    table.grid-table tr.even-parity td { background: var(--even-row); }
+    table.grid-table .center { text-align: center; }
+    table.grid-table .bold { font-weight: 700; }
+
+    .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+    .badge-lk { background: #dbeafe; color: #1e40af; }
+    .badge-pr { background: #dcfce7; color: #166534; }
+    .badge-lab { background: #fef3c7; color: #92400e; }
+    .badge-mr { background: #f3e8ff; color: #6b21a8; }
+    .badge-srs { background: #e0e7ff; color: #4338ca; }
+    .badge-credit { background: #ede9fe; color: #6d28d9; }
+    .badge-exam { background: #fee2e2; color: #b91c1c; }
+
+    .debug-card { background: #fff; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
+    .debug-card-header { background: #f8fafc; padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); }
+    .debug-card-title { font-weight: 700; font-size: 14px; color: var(--primary); }
+    .debug-card-body { padding: 14px 16px; font-size: 13px; }
+    pre.json-viewer {
+      background: #0f172a;
+      color: #38bdf8;
+      padding: 14px;
+      border-radius: 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      overflow-x: auto;
+      max-height: 400px;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div>
+      <h1>MIREA Timetable Tool</h1>
+      <div class="sub">Генератор сетки расписания (Excel) РТУ МИРЭА </div>
+    </div>
+  </header>
+
+  <nav class="nav-tabs">
+    <button class="tab-btn active" onclick="switchTab('export')">📊 Экспорт расписания в Excel</button>
+    <button class="tab-btn" onclick="switchTab('debug')">🔍 Debug (для разработчиков)</button>
+  </nav>
+
+  <div class="container">
+
+    <div id="file-protocol-banner" class="banner-warning">
+      <div>
+        ⚠️ <b>Страница открыта через протокол <code>file://</code></b>. Запросы к API блокируются браузером (CORS).<br>
+        Запустите локальный сервер командой в терминале: <code>python tools/server.py</code>
+      </div>
+    </div>
+
+    <!-- TAB 1: EXPORT GRID -->
+    <div id="tab-export" class="tab-content">
+      <div class="card">
+        <div class="card-title">Параметры выгрузки сетки расписания</div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="export-type">Тип расписания</label>
+            <select id="export-type" onchange="onExportTypeChange()">
+              <option value="classroom">Аудитории (сетка аудиторий)</option>
+              <option value="teacher">Преподаватель</option>
+              <option value="group" selected>Учебная группа</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="export-semester">Семестр</label>
+            <select id="export-semester">
+              <option value="auto" selected>Текущий семестр (автоопределение)</option>
+              <option value="spring">Весенний семестр (февраль – июнь)</option>
+              <option value="autumn">Осенний семестр (сентябрь – январь)</option>
+              <option value="all">Все семестры (без фильтрации)</option>
+            </select>
+          </div>
+
+          <!-- Переключатель скрытия прошедших занятий -->
+          <div class="toggle-container">
+            <label class="toggle-row">
+              <input type="checkbox" id="toggle-hide-past" onchange="onToggleHidePastChange()">
+              <span style="font-weight: 600; font-size: 13px;">Скрыть прошедшие занятия</span>
+            </label>
+            <div class="toggle-sub" id="hide-past-settings" style="display: none;">
+              <span>Начиная с недели:</span>
+              <input type="number" id="filter-current-week" min="1" max="24" style="width: 65px; padding: 4px 6px; font-size: 13px;">
+              <span id="label-auto-week" class="badge-auto">авто: ? н.</span>
+            </div>
+          </div>
+
+          <div class="form-group" id="group-campus" style="display: none;">
+            <label for="export-campus">Кампус</label>
+            <select id="export-campus">
+              <option value="В-78" selected>В-78 (пр-т Вернадского, 78)</option>
+              <option value="В-86">В-86 (пр-т Вернадского, 86)</option>
+              <option value="С-20">С-20 (ул. Стромынка, 20)</option>
+              <option value="МП-1">МП-1 (ул. Малая Пироговская, 1)</option>
+              <option value="СГ-22">СГ-22 (5-я ул. Соколиной Горы, 22)</option>
+            </select>
+          </div>
+
+          <div class="form-group full">
+            <label id="export-query-label" for="export-query">Название учебной группы (или групп через запятую)</label>
+            <input type="text" id="export-query" value="РРМО-01-25" placeholder="Например: РРМО-01-25">
+            <div class="presets-row" id="presets-row" style="display: flex;">
+              <span style="font-size: 12px; color: var(--text-muted);">Быстрый выбор:</span>
+              <span class="preset-chip" onclick="setPreset('РРМО-01-25', 'group')">РРМО-01-25</span>
+              <span class="preset-chip" onclick="setPreset('Б-201, Б-202, Б-207, Б-208, Б-215, Б-221', 'classroom', 'В-78')">Кафедра РПТ</span>
+              <span class="preset-chip" onclick="setPreset('', 'group')">Очистить</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="actions-row">
+          <button class="btn btn-success" id="btn-download" onclick="startExportProcess(true)">
+            📥 Скачать Excel (.xlsx)
+          </button>
+          <button class="btn btn-secondary" id="btn-preview" onclick="startExportProcess(false)">
+            👁️ Предпросмотр в браузере
+          </button>
+        </div>
+
+        <div id="export-status" class="status-box"></div>
+      </div>
+
+      <div id="preview-box" class="card" style="display: none;">
+        <div class="card-title">Предпросмотр сформированной сетки</div>
+        <div class="room-tabs" id="preview-room-tabs"></div>
+        <div class="preview-container">
+          <table class="grid-table" id="preview-table"></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: DEBUG (ДЛЯ РАЗРАБОТЧИКОВ) -->
+    <div id="tab-debug" class="tab-content" style="display: none;">
+      <div class="card">
+        <div class="card-title">Поиск точного сырого элемента (find_item.py)</div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="debug-target-type">Тип объекта</label>
+            <select id="debug-target-type">
+              <option value="group" selected>Группа</option>
+              <option value="classroom">Аудитория</option>
+              <option value="teacher">Преподаватель</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="debug-target">Название / Номер</label>
+            <input type="text" id="debug-target" value="РРМО-01-25" placeholder="Например: РРМО-01-25">
+          </div>
+          <div class="form-group">
+            <label for="debug-semester">Семестр</label>
+            <select id="debug-semester">
+              <option value="auto" selected>Текущий семестр (авто)</option>
+              <option value="spring">Весенний семестр</option>
+              <option value="autumn">Осенний семестр</option>
+              <option value="all">Все семестры</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="debug-campus">Кампус</label>
+            <input type="text" id="debug-campus" value="В-78">
+          </div>
+          <div class="form-group">
+            <label for="debug-pair">Номер пары (1-7)</label>
+            <select id="debug-pair">
+              <option value="0">Любая пара</option>
+              <option value="1">1 пара (09:00 - 10:30)</option>
+              <option value="2">2 пара (10:40 - 12:10)</option>
+              <option value="3">3 пара (12:40 - 14:10)</option>
+              <option value="4">4 пара (14:20 - 15:50)</option>
+              <option value="5">5 пара (16:20 - 17:50)</option>
+              <option value="6" selected>6 пара (18:00 - 19:30)</option>
+              <option value="7">7 пара (19:40 - 21:10)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="debug-week">Номер недели семестра</label>
+            <input type="number" id="debug-week" value="0" min="0" max="24" placeholder="0 = любая">
+          </div>
+          <div class="form-group">
+            <label for="debug-day">День недели (опционально)</label>
+            <select id="debug-day">
+              <option value="">Любой день</option>
+              <option value="ПН">Понедельник (ПН)</option>
+              <option value="ВТ" selected>Вторник (ВТ)</option>
+              <option value="СР">Среда (СР)</option>
+              <option value="ЧТ">Четверг (ЧТ)</option>
+              <option value="ПТ">Пятница (ПТ)</option>
+              <option value="СБ">Суббота (СБ)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="actions-row">
+          <button class="btn btn-primary" onclick="runDebugSearch()">
+            🔍 Найти сырые записи
+          </button>
+        </div>
+        <div id="debug-status" class="status-box"></div>
+      </div>
+
+      <div id="debug-results-container"></div>
+    </div>
+
+  </div>
+
+  <script>
+    if (window.location.protocol === 'file:') {
+      document.getElementById('file-protocol-banner').style.display = 'flex';
+    }
+
+    const LESSON_BELLS = {
+      1: ["09:00", "10:30"],
+      2: ["10:40", "12:10"],
+      3: ["12:40", "14:10"],
+      4: ["14:20", "15:50"],
+      5: ["16:20", "17:50"],
+      6: ["18:00", "19:30"],
+      7: ["19:40", "21:10"]
+    };
+
+    const WEEKDAYS = [
+      [0, "Понедельник", "ПН"],
+      [1, "Вторник", "ВТ"],
+      [2, "Среда", "СР"],
+      [3, "Четверг", "ЧТ"],
+      [4, "Пятница", "ПТ"],
+      [5, "Суббота", "СБ"]
+    ];
+
+    const KNOWN_OTHER_CAMPUSES = ["С-20", "C-20", "МП-1", "В-86", "СГ-22", "КОЛЛЕДЖ"];
+    let lastLoadedSheetsData = {};
+
+    // Определение текущей недели при загрузке
+    const initialSemInfo = getSemesterInfo(new Date());
+    const autoWeekNumber = initialSemInfo.weekNum;
+    document.getElementById('filter-current-week').value = autoWeekNumber;
+    document.getElementById('label-auto-week').textContent = `авто: ${autoWeekNumber} н.`;
+
+    function onToggleHidePastChange() {
+      const isChecked = document.getElementById('toggle-hide-past').checked;
+      document.getElementById('hide-past-settings').style.display = isChecked ? 'flex' : 'none';
+    }
+
+    function switchTab(tab) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
+      if (tab === 'export') {
+        document.querySelector('.tab-btn:nth-child(1)').classList.add('active');
+        document.getElementById('tab-export').style.display = 'block';
+      } else {
+        document.querySelector('.tab-btn:nth-child(2)').classList.add('active');
+        document.getElementById('tab-debug').style.display = 'block';
+      }
+    }
+
+    function onExportTypeChange() {
+      const type = document.getElementById('export-type').value;
+      const campusGroup = document.getElementById('group-campus');
+      const label = document.getElementById('export-query-label');
+      const input = document.getElementById('export-query');
+
+      if (type === 'classroom') {
+        campusGroup.style.display = 'flex';
+        label.textContent = 'Номера аудиторий (через запятую)';
+        input.value = 'Б-201, Б-202, Б-207, Б-208, Б-215, Б-221';
+      } else if (type === 'teacher') {
+        campusGroup.style.display = 'none';
+        label.textContent = 'ФИО преподавателя (или несколько через запятую)';
+        input.value = 'Иванов Иван Иванович';
+      } else {
+        campusGroup.style.display = 'none';
+        label.textContent = 'Название учебной группы (или групп через запятую)';
+        input.value = 'РРМО-01-25';
+      }
+    }
+
+    function setPreset(query, type, campus) {
+      document.getElementById('export-type').value = type;
+      onExportTypeChange();
+      document.getElementById('export-query').value = query;
+      if (campus) document.getElementById('export-campus').value = campus;
+    }
+
+    function showStatus(elemId, msg, type = 'info') {
+      const el = document.getElementById(elemId);
+      el.className = 'status-box ' + type;
+      el.innerHTML = msg;
+    }
+
+    function getPairNumberFromStr(startStr) {
+      if (!startStr) return null;
+      try {
+        const [sh, sm] = startStr.split(':').slice(0, 2).map(Number);
+        const currM = sh * 60 + sm;
+        for (const [pNum, [bStart]] of Object.entries(LESSON_BELLS)) {
+          const [bh, bm] = bStart.split(':').map(Number);
+          if (Math.abs(currM - (bh * 60 + bm)) <= 20) {
+            return Number(pNum);
+          }
+        }
+      } catch (e) {}
+      return null;
+    }
+
+    function parseItemDate(dStr) {
+      if (!dStr) return null;
+      dStr = String(dStr).trim();
+      const parts = dStr.split(/[-.]/);
+      if (parts.length === 3) {
+        if (parts[0].length === 4) {
+          return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+        } else {
+          return new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+        }
+      }
+      const d = new Date(dStr);
+      return isNaN(d) ? null : d;
+    }
+
+    function getSemesterInfo(dt) {
+      const year = dt.getFullYear();
+      const month = dt.getMonth() + 1;
+      let acadYear;
+      let season;
+      let semStart;
+
+      if (month >= 8) {
+        acadYear = year;
+        season = 'autumn';
+        semStart = new Date(year, 8, 1);
+      } else if (month === 1) {
+        acadYear = year - 1;
+        season = 'autumn';
+        semStart = new Date(year - 1, 8, 1);
+      } else {
+        acadYear = year - 1;
+        season = 'spring';
+        semStart = new Date(year, 1, 9);
+      }
+
+      const getPyWeekday = d => (d.getDay() + 6) % 7;
+      const semMonday = new Date(semStart);
+      semMonday.setDate(semMonday.getDate() - getPyWeekday(semStart));
+      semMonday.setHours(0, 0, 0, 0);
+
+      const currMonday = new Date(dt);
+      currMonday.setDate(currMonday.getDate() - getPyWeekday(dt));
+      currMonday.setHours(0, 0, 0, 0);
+
+      const diffDays = Math.round((currMonday - semMonday) / 86400000);
+      const weekNum = Math.max(1, Math.floor(diffDays / 7) + 1);
+      const parity = (weekNum % 2 === 1) ? 1 : 2;
+
+      const semesterId = `${acadYear}_${season}`;
+      const label = (season === 'autumn' ? 'Осенний' : 'Весенний') + ` ${acadYear}/${acadYear + 1}`;
+
+      return { acadYear, season, semStart, weekNum, parity, semesterId, label };
+    }
+
+    function formatWeeks(weekSet, parity) {
+      if (!weekSet || weekSet.size === 0) return "";
+      const weeks = Array.from(weekSet).sort((a,b) => a - b);
+      const minW = weeks[0];
+      const maxW = weeks[weeks.length - 1];
+
+      const expectedStep2 = [];
+      for (let w = minW; w <= maxW; w += 2) expectedStep2.push(w);
+      const isEqual = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+
+      if (isEqual(weeks, expectedStep2)) {
+        if (weeks.length === 1) return `${minW} н.`;
+        if (minW <= 2 && maxW >= 16) return "";
+        return `${minW}-${maxW} н.`;
+      }
+
+      const allPossible = [];
+      for (let w = (parity === 1 ? 1 : 2); w <= 18; w += 2) allPossible.push(w);
+      const missing = allPossible.filter(w => !weekSet.has(w));
+      if (missing.length === 1 && maxW >= 16) {
+        return `кр. ${missing[0]} н.`;
+      }
+      if (weeks.length <= 4) return `${weeks.join(',')} н.`;
+      return `${minW}-${maxW} н.`;
+    }
+
+    function normalizeLessonType(typeRaw, subject = "") {
+      const t = (typeRaw || "").toLowerCase();
+      const s = (subject || "").toLowerCase();
+
+      if (t.includes("lecture") || t.includes("лек") || t.includes("лк")) return "ЛК";
+      if (t.includes("practice") || t.includes("прак") || t.includes("пр")) return "ПР";
+      if (t.includes("lab") || t.includes("лаб")) return "ЛАБ";
+      if (t.includes("individual") || t.includes("срс") || t.includes("сам")) {
+        return (s.includes("научно") || s.includes("нир")) ? "НИР" : "СРС";
+      }
+      if (t.includes("credit") || t.includes("зачет") || t.includes("зачёт")) return "ЗАЧ";
+      if (t.includes("exam") || t.includes("экзамен") || t.includes("экз")) return "ЭКЗ";
+      if (t.includes("consultation") || t.includes("конс")) return "КОНС";
+      if (t.includes("unknown") || t.includes("мер") || t.includes("мр")) return "МР";
+
+      return typeRaw ? typeRaw.toUpperCase() : "";
+    }
+
+    function shortenFio(fio) {
+      if (!fio) return "";
+      const parts = fio.trim().split(/\s+/);
+      if (parts.length >= 3) return `${parts[0]} ${parts[1][0]}. ${parts[2][0]}.`;
+      if (parts.length === 2) return `${parts[0]} ${parts[1][0]}.`;
+      return fio;
+    }
+
+    function isClassroomMatch(classrooms, roomName, campus = "В-78") {
+      const norm = s => (s || "").replace(/B/g, "В").replace(/\s+/g, "").toUpperCase();
+      const m = roomName.trim().match(/^([А-ЯA-Z])[-_ ]?(\d+)$/i);
+      const roomNorm = norm(m ? `${m[1]}-${m[2]}` : roomName);
+      const campusNorm = norm(campus);
+
+      for (const c of classrooms) {
+        const cNorm = norm(c);
+        if (KNOWN_OTHER_CAMPUSES.some(other => cNorm.includes(norm(other))) && !cNorm.includes(campusNorm)) {
+          continue;
+        }
+        if (cNorm.includes(roomNorm)) return true;
+      }
+      return false;
+    }
+
+    async function apiPost(endpoint, data) {
+      try {
+        const resp = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+
+        const resJson = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          throw new Error(resJson.error || `HTTP ${resp.status}`);
+        }
+        return resJson;
+      } catch (err) {
+        if (window.location.protocol === 'file:') {
+          throw new Error('Файл открыт через file://. Запустите в терминале: python tools/server.py');
+        }
+        throw err;
+      }
+    }
+
+    async function searchEntity(type, query, campus = "В-78") {
+      const candidates = await apiPost('/api/search', { type, query });
+      if (!Array.isArray(candidates) || candidates.length === 0) return null;
+
+      if (type === 'classroom') {
+        const normCampus = campus.replace(/B/g, 'В').toUpperCase();
+        const normQ = query.replace(/B/g, 'В').replace(/\s+/g, '').toUpperCase();
+        for (const c of candidates) {
+          const title = (c.name || "").replace(/B/g, 'В').toUpperCase();
+          if (title.includes(normCampus) && title.includes(normQ)) {
+            return c;
+          }
+        }
+      }
+      return candidates[0];
+    }
+
+    function pickTargetSemester(rawItems, semesterFilter) {
+      if (semesterFilter === 'all') return null;
+
+      const semesterCounts = {};
+      for (const item of rawItems) {
+        for (const dStr of (item.dates || [])) {
+          const dt = parseItemDate(dStr);
+          if (!dt) continue;
+          const info = getSemesterInfo(dt);
+          semesterCounts[info.semesterId] = (semesterCounts[info.semesterId] || 0) + 1;
+        }
+      }
+
+      const availableIds = Object.keys(semesterCounts);
+      if (availableIds.length === 0) return null;
+
+      if (semesterFilter === 'spring') {
+        const springs = availableIds.filter(id => id.endsWith('_spring')).sort();
+        return springs.pop() || availableIds.sort().pop();
+      }
+      if (semesterFilter === 'autumn') {
+        const autumns = availableIds.filter(id => id.endsWith('_autumn')).sort();
+        return autumns.pop() || availableIds.sort().pop();
+      }
+
+      const currentId = getSemesterInfo(new Date()).semesterId;
+      if (semesterCounts[currentId]) return currentId;
+
+      return availableIds.sort().pop();
+    }
+
+    async function loadGridForTarget(type, name, campus, semesterFilter = "auto", hidePast = false, minWeek = 1) {
+      const target = await searchEntity(type, name, campus);
+      if (!target) throw new Error(`Объект «${name}» не найден.`);
+
+      const rawItems = await apiPost('/api/schedule', { type, uid: target.uid });
+      if (!Array.isArray(rawItems)) return { grid: {}, target };
+
+      const targetSemester = pickTargetSemester(rawItems, semesterFilter);
+
+      const gridAcc = {};
+      let filteredOldLessonsCount = 0;
+
+      for (const item of rawItems) {
+        if (type === 'classroom') {
+          let rawClassrooms = item.classrooms || item.classroom || [];
+          if (!Array.isArray(rawClassrooms)) rawClassrooms = [rawClassrooms];
+          const cNames = rawClassrooms.map(c => typeof c === 'object' ? (c.name || "") : String(c));
+          if (!isClassroomMatch(cNames, name, campus)) continue;
+        }
+
+        const bells = item.lesson_bells || {};
+        const pairNum = getPairNumberFromStr(bells.start_time || "");
+        if (!pairNum) continue;
+
+        const subject = item.subject || "";
+        const lessonType = normalizeLessonType(item.lesson_type, subject);
+
+        let rawGroups = item.groups || item.group || [];
+        if (!Array.isArray(rawGroups)) rawGroups = [rawGroups];
+        const gNames = [...new Set(rawGroups.map(g => typeof g === 'object' ? (g.name || g.target_title || g.title || "") : String(g)).filter(Boolean))];
+        const groupsStr = gNames.join(', ');
+
+        let rawTeachers = item.teachers || item.teacher || [];
+        if (!Array.isArray(rawTeachers)) rawTeachers = [rawTeachers];
+        const tNames = [...new Set(rawTeachers.map(t => typeof t === 'object' ? (t.name || t.target_title || t.title || "") : String(t)).filter(Boolean).map(shortenFio))];
+        const teachersStr = tNames.join(', ');
+
+        let rawClassroomsAll = item.classrooms || item.classroom || [];
+        if (!Array.isArray(rawClassroomsAll)) rawClassroomsAll = [rawClassroomsAll];
+        const roomStr = rawClassroomsAll.map(c => typeof c === 'object' ? c.name : String(c)).join(', ');
+
+        const columnEntityStr = (type === 'teacher') ? roomStr : (type === 'classroom' ? teachersStr : `${teachersStr}${roomStr ? ` (${roomStr})` : ''}`);
+        const lessonKey = `${subject}||${lessonType}||${groupsStr}||${columnEntityStr}`;
+
+        const dates = item.dates || [];
+        for (const dStr of dates) {
+          const dt = parseItemDate(dStr);
+          if (!dt) continue;
+
+          const semInfo = getSemesterInfo(dt);
+          if (targetSemester && semInfo.semesterId !== targetSemester) {
+            filteredOldLessonsCount++;
+            continue;
+          }
+
+          const pyWeekday = (dt.getDay() + 6) % 7;
+          if (pyWeekday > 5) continue;
+
+          const slotKey = `${pyWeekday}_${pairNum}_${semInfo.parity}`;
+
+          if (!gridAcc[slotKey]) gridAcc[slotKey] = new Map();
+          if (!gridAcc[slotKey].has(lessonKey)) gridAcc[slotKey].set(lessonKey, new Set());
+          gridAcc[slotKey].get(lessonKey).add(semInfo.weekNum);
+        }
+      }
+
+      const finalGrid = {};
+      let hiddenPastLessonsCount = 0;
+
+      for (const [slotKey, lessonsMap] of Object.entries(gridAcc)) {
+        const [, , parityStr] = slotKey.split('_');
+        const parity = Number(parityStr);
+        finalGrid[slotKey] = [];
+
+        for (const [lessonKey, weekSet] of lessonsMap.entries()) {
+          const weeksList = Array.from(weekSet);
+          const maxWeekOfLesson = Math.max(...weeksList);
+
+          // ФИЛЬТР ПРОШЕДШИХ ЗАНЯТИЙ:
+          // Если включен toggle и ВСЕ недели проведения занятия прошли (< minWeek), скрываем его
+          if (hidePast && maxWeekOfLesson < minWeek) {
+            hiddenPastLessonsCount++;
+            continue;
+          }
+
+          const [subj, lType, grp, otherCol] = lessonKey.split('||');
+          const weeksLabel = formatWeeks(weekSet, parity);
+          finalGrid[slotKey].push({
+            weeks: weeksLabel,
+            subject: subj,
+            type: lType,
+            groups: grp,
+            otherCol: otherCol
+          });
+        }
+      }
+
+      return {
+        grid: finalGrid,
+        target,
+        targetSemester,
+        filteredOldCount: filteredOldLessonsCount,
+        hiddenPastCount: hiddenPastLessonsCount
+      };
+    }
+
+    async function generateExcelWorkbook(sheetsData, entityType, campus, hidePast = false, minWeek = 1) {
+      const wb = new ExcelJS.Workbook();
+      wb.creator = "MIREA Connect Timetable Grid";
+
+      const dayHeaderFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF899EC6' } };
+      const tableHeaderFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF3E5A8A' } };
+      const evenRowFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF7F9FC' } };
+
+      const fontTitle = { name: 'Calibri', size: 16, bold: true, color: { argb: 'FF1F2A44' } };
+      const fontDay = { name: 'Calibri', size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
+      const fontTh = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+      const fontBold = { name: 'Calibri', size: 10, bold: true };
+      const fontMain = { name: 'Calibri', size: 10 };
+
+      const thinBorder = {
+        top: { style: 'thin', color: { argb: 'FFCBD2E0' } },
+        left: { style: 'thin', color: { argb: 'FFCBD2E0' } },
+        bottom: { style: 'thin', color: { argb: 'FFCBD2E0' } },
+        right: { style: 'thin', color: { argb: 'FFCBD2E0' } }
+      };
+
+      for (const [sheetTitle, sheetObj] of Object.entries(sheetsData)) {
+        const grid = sheetObj.grid || {};
+        const ws = wb.addWorksheet(sheetTitle.slice(0, 31));
+        ws.views = [{ state: 'frozen', xSplit: 0, ySplit: 1 }];
+
+        const notePast = hidePast ? ` (с ${minWeek} недели)` : '';
+
+        ws.mergeCells('A1:G1');
+        const c1 = ws.getCell('A1');
+        c1.value = entityType === 'classroom'
+          ? `Расписание аудитории ${sheetTitle} (${campus})${notePast}`
+          : (entityType === 'teacher' ? `Расписание преподавателя ${sheetTitle}${notePast}` : `Расписание группы ${sheetTitle}${notePast}`);
+        c1.font = fontTitle;
+        c1.alignment = { vertical: 'middle' };
+        ws.getRow(1).height = 30;
+
+        let currentRow = 2;
+        const col7Name = entityType === 'teacher' ? 'Аудитории' : (entityType === 'classroom' ? 'Преподаватель' : 'Преподаватель / Ауд.');
+        const headers = ["Пара", "Время", "Неделя", "Дисциплина (недели)", "Вид", "Группы", col7Name];
+
+        for (const [wIdx, wName] of WEEKDAYS) {
+          ws.mergeCells(currentRow, 1, currentRow, 7);
+          const dayCell = ws.getCell(currentRow, 1);
+          dayCell.value = wName.toUpperCase();
+          dayCell.font = fontDay;
+          dayCell.fill = dayHeaderFill;
+          dayCell.alignment = { horizontal: 'center', vertical: 'middle' };
+          ws.getRow(currentRow).height = 24;
+          currentRow++;
+
+          for (let col = 1; col <= 7; col++) {
+            const th = ws.getCell(currentRow, col);
+            th.value = headers[col - 1];
+            th.font = fontTh;
+            th.fill = tableHeaderFill;
+            th.alignment = { horizontal: 'center', vertical: 'middle' };
+            th.border = thinBorder;
+          }
+          ws.getRow(currentRow).height = 20;
+          currentRow++;
+
+          for (let pairNum = 1; pairNum <= 7; pairNum++) {
+            const [bStart, bEnd] = LESSON_BELLS[pairNum];
+            const timeStr = `${bStart}–${bEnd}`;
+
+            for (const [parity, parityLabel] of [[1, "I"], [2, "II"]]) {
+              const slotKey = `${wIdx}_${pairNum}_${parity}`;
+              const lessons = grid[slotKey] || [];
+
+              let subjVal = "", typeVal = "", grpVal = "", otherVal = "";
+              if (lessons.length > 0) {
+                subjVal = lessons.map(l => (l.weeks ? `${l.weeks} ` : "") + l.subject).join("\n");
+                typeVal = lessons.map(l => l.type).join("\n");
+                grpVal = lessons.map(l => l.groups).join("\n");
+                otherVal = lessons.map(l => l.otherCol).join("\n");
+              }
+
+              const row = ws.getRow(currentRow);
+              row.values = [pairNum, timeStr, parityLabel, subjVal, typeVal, grpVal, otherVal];
+              row.height = lessons.length === 0 ? 22 : Math.max(26, lessons.length * 18);
+
+              for (let c = 1; c <= 7; c++) {
+                const cell = row.getCell(c);
+                cell.border = thinBorder;
+                cell.font = (c === 1 || c === 3) ? fontBold : fontMain;
+                cell.alignment = (c === 4 || c === 6 || c === 7)
+                  ? { horizontal: 'left', vertical: 'middle', wrapText: true }
+                  : { horizontal: 'center', vertical: 'middle', wrapText: true };
+
+                if (parity === 2) cell.fill = evenRowFill;
+              }
+              currentRow++;
+            }
+          }
+          currentRow++;
+        }
+
+        const colWidths = [7, 14, 9, 48, 8, 24, 26];
+        colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+      }
+
+      return wb;
+    }
+
+    function renderPreviewTable(sheetTitle, grid, entityType) {
+      const table = document.getElementById('preview-table');
+      table.innerHTML = '';
+      const col7Name = entityType === 'teacher' ? 'Аудитории' : (entityType === 'classroom' ? 'Преподаватель' : 'Преподаватель / Ауд.');
+      const headers = ["Пара", "Время", "Неделя", "Дисциплина (недели)", "Вид", "Группы", col7Name];
+
+      for (const [wIdx, wName] of WEEKDAYS) {
+        const trDay = document.createElement('tr');
+        const tdDay = document.createElement('td');
+        tdDay.colSpan = 7;
+        tdDay.className = 'day-header';
+        tdDay.textContent = wName.toUpperCase();
+        trDay.appendChild(tdDay);
+        table.appendChild(trDay);
+
+        const trTh = document.createElement('tr');
+        headers.forEach(h => {
+          const th = document.createElement('th');
+          th.className = 'table-header';
+          th.textContent = h;
+          trTh.appendChild(th);
+        });
+        table.appendChild(trTh);
+
+        for (let pairNum = 1; pairNum <= 7; pairNum++) {
+          const [bStart, bEnd] = LESSON_BELLS[pairNum];
+          const timeStr = `${bStart}–${bEnd}`;
+
+          for (const [parity, parityLabel] of [[1, "I"], [2, "II"]]) {
+            const slotKey = `${wIdx}_${pairNum}_${parity}`;
+            const lessons = grid[slotKey] || [];
+            const tr = document.createElement('tr');
+            if (parity === 2) tr.className = 'even-parity';
+
+            const tdPair = document.createElement('td'); tdPair.className = 'center bold'; tdPair.textContent = pairNum;
+            const tdTime = document.createElement('td'); tdTime.className = 'center'; tdTime.textContent = timeStr;
+            const tdParity = document.createElement('td'); tdParity.className = 'center bold'; tdParity.textContent = parityLabel;
+
+            const tdSubj = document.createElement('td');
+            const tdType = document.createElement('td'); tdType.className = 'center';
+            const tdGrp = document.createElement('td');
+            const tdOther = document.createElement('td');
+
+            if (lessons.length > 0) {
+              tdSubj.innerHTML = lessons.map(l => `<div>${l.weeks ? `<b>${l.weeks}</b> ` : ""}${escapeHtml(l.subject)}</div>`).join('');
+              tdType.innerHTML = lessons.map(l => {
+                let bClass = 'badge-mr';
+                if (l.type === 'ЛК') bClass = 'badge-lk';
+                else if (l.type === 'ПР') bClass = 'badge-pr';
+                else if (l.type === 'ЛАБ') bClass = 'badge-lab';
+                else if (l.type === 'СРС' || l.type === 'НИР') bClass = 'badge-srs';
+                else if (l.type === 'ЗАЧ') bClass = 'badge-credit';
+                else if (l.type === 'ЭКЗ') bClass = 'badge-exam';
+                return `<div><span class="badge ${bClass}">${escapeHtml(l.type)}</span></div>`;
+              }).join('');
+              tdGrp.innerHTML = lessons.map(l => `<div>${escapeHtml(l.groups)}</div>`).join('');
+              tdOther.innerHTML = lessons.map(l => `<div>${escapeHtml(l.otherCol)}</div>`).join('');
+            }
+
+            tr.append(tdPair, tdTime, tdParity, tdSubj, tdType, tdGrp, tdOther);
+            table.appendChild(tr);
+          }
+        }
+      }
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+    }
+
+    async function startExportProcess(downloadFile = true) {
+      const type = document.getElementById('export-type').value;
+      const campus = document.getElementById('export-campus').value;
+      const queryRaw = document.getElementById('export-query').value.trim();
+      const semesterFilter = document.getElementById('export-semester').value;
+
+      const hidePast = document.getElementById('toggle-hide-past').checked;
+      const minWeek = Number(document.getElementById('filter-current-week').value) || 1;
+
+      if (!queryRaw) {
+        showStatus('export-status', 'Пожалуйста, укажите объект поиска.', 'error');
+        return;
+      }
+
+      const items = queryRaw.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean);
+      const btnDown = document.getElementById('btn-download');
+      const btnPrev = document.getElementById('btn-preview');
+      btnDown.disabled = true; btnPrev.disabled = true;
+
+      showStatus('export-status', `Подключение к API и обработка (${items.length})...`, 'info');
+      lastLoadedSheetsData = {};
+
+      try {
+        let statusNotes = [];
+
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          showStatus('export-status', `[${i+1}/${items.length}] Получение расписания: ${item}...`, 'info');
+          const res = await loadGridForTarget(type, item, campus, semesterFilter, hidePast, minWeek);
+          lastLoadedSheetsData[item] = res;
+
+          const notes = [];
+          if (res.filteredOldCount > 0) notes.push(`скрыто ${res.filteredOldCount} старых дат другого семестра`);
+          if (hidePast && res.hiddenPastCount > 0) notes.push(`скрыто ${res.hiddenPastCount} завершённых занятий (ранее ${minWeek} н.)`);
+          if (notes.length > 0) statusNotes.push(`${item}: ${notes.join(', ')}`);
+        }
+
+        showStatus('export-status', `Формирование документа Excel...`, 'info');
+        const wb = await generateExcelWorkbook(lastLoadedSheetsData, type, campus, hidePast, minWeek);
+
+        if (downloadFile) {
+          const buffer = await wb.xlsx.writeBuffer();
+          const cleanName = items.length === 1 ? items[0] : `расписание_${type}_${items.length}_объектов`;
+          const suffixWeek = hidePast ? `_с_${minWeek}_нед` : '';
+          saveAs(new Blob([buffer]), `${cleanName}${suffixWeek}_сетка.xlsx`);
+          const noteStr = statusNotes.length > 0 ? `<br><span style="font-size:12px;opacity:0.9;">${statusNotes.join('<br>')}</span>` : '';
+          showStatus('export-status', `Файл Excel успешно сохранён!${noteStr}`, 'success');
+        }
+
+        const previewBox = document.getElementById('preview-box');
+        previewBox.style.display = 'block';
+        const roomTabs = document.getElementById('preview-room-tabs');
+        roomTabs.innerHTML = '';
+
+        items.forEach((item, idx) => {
+          const btn = document.createElement('button');
+          btn.className = 'room-tab-btn ' + (idx === 0 ? 'active' : '');
+          btn.textContent = item;
+          btn.onclick = () => {
+            document.querySelectorAll('.room-tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            renderPreviewTable(item, lastLoadedSheetsData[item].grid, type);
+          };
+          roomTabs.appendChild(btn);
+        });
+
+        renderPreviewTable(items[0], lastLoadedSheetsData[items[0]].grid, type);
+        if (!downloadFile) {
+          const noteStr = statusNotes.length > 0 ? `<br><span style="font-size:12px;opacity:0.9;">${statusNotes.join('<br>')}</span>` : '';
+          showStatus('export-status', `Предпросмотр сетки готов.${noteStr}`, 'success');
+        }
+
+      } catch (err) {
+        showStatus('export-status', `Ошибка: ${err.message}`, 'error');
+      } finally {
+        btnDown.disabled = false; btnPrev.disabled = false;
+      }
+    }
+
+    async function runDebugSearch() {
+      const type = document.getElementById('debug-target-type').value;
+      const targetName = document.getElementById('debug-target').value.trim();
+      const campus = document.getElementById('debug-campus').value.trim();
+      const pairFilter = Number(document.getElementById('debug-pair').value);
+      const weekFilter = Number(document.getElementById('debug-week').value);
+      const dayFilter = document.getElementById('debug-day').value.trim();
+      const semesterFilter = document.getElementById('debug-semester').value;
+
+      const statusEl = 'debug-status';
+      const container = document.getElementById('debug-results-container');
+      container.innerHTML = '';
+
+      if (!targetName) {
+        showStatus(statusEl, 'Введите номер аудитории, ФИО или группу.', 'error');
+        return;
+      }
+
+      showStatus(statusEl, `Поиск объекта «${targetName}»...`, 'info');
+
+      try {
+        const target = await searchEntity(type, targetName, campus);
+        if (!target) throw new Error(`Объект «${targetName}» не найден.`);
+
+        showStatus(statusEl, `Загрузка сырого payload (uid=${target.uid})...`, 'info');
+        const rawItems = await apiPost('/api/schedule', { type, uid: target.uid });
+
+        if (!Array.isArray(rawItems)) {
+          showStatus(statusEl, 'Ответ сервера пуст.', 'error');
+          return;
+        }
+
+        const targetSemester = pickTargetSemester(rawItems, semesterFilter);
+        const matches = [];
+
+        for (const item of rawItems) {
+          if (type === 'classroom') {
+            let rawC = item.classrooms || item.classroom || [];
+            if (!Array.isArray(rawC)) rawC = [rawC];
+            const cList = rawC.map(c => typeof c === 'object' ? (c.name || "") : String(c));
+            if (!isClassroomMatch(cList, targetName, campus)) continue;
+          }
+
+          if (pairFilter > 0) {
+            const bells = item.lesson_bells || {};
+            const pNum = getPairNumberFromStr(bells.start_time || "");
+            if (pNum !== pairFilter) continue;
+          }
+
+          const dates = item.dates || [];
+          const matchedDates = [];
+          for (const dStr of dates) {
+            const dt = parseItemDate(dStr);
+            if (!dt) continue;
+
+            const semInfo = getSemesterInfo(dt);
+            if (targetSemester && semInfo.semesterId !== targetSemester) continue;
+
+            const pyWeekday = (dt.getDay() + 6) % 7;
+            if (pyWeekday > 5) continue;
+
+            if (weekFilter > 0 && semInfo.weekNum !== weekFilter) continue;
+
+            if (dayFilter) {
+              const dayTuple = WEEKDAYS[pyWeekday];
+              if (!dayTuple[1].toUpperCase().includes(dayFilter) && !dayTuple[2].includes(dayFilter)) {
+                continue;
+              }
+            }
+            matchedDates.push({ dt, semInfo });
+          }
+
+          if (matchedDates.length > 0) matches.push({ item, matchedDates });
+        }
+
+        const semLabel = targetSemester ? ` | Семестр: ${targetSemester}` : ' | Без фильтра семестра';
+        showStatus(statusEl, `Найдено записей: ${matches.length} (из ${rawItems.length} сырых)${semLabel}`, matches.length > 0 ? 'success' : 'info');
+
+        if (matches.length === 0) {
+          container.innerHTML = '<div class="card" style="text-align: center; color: var(--text-muted);">В этот слот занятий не найдено. Попробуйте выбрать другой семестр или очистить фильтр недели.</div>';
+          return;
+        }
+
+        matches.forEach(({ item, matchedDates }, idx) => {
+          const sample = matchedDates[0];
+          const pyWd = (sample.dt.getDay() + 6) % 7;
+          const dayName = WEEKDAYS[pyWd][1];
+          const datesFormatted = matchedDates.map(m => {
+            const d = m.dt;
+            return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()} (${m.semInfo.weekNum} н.)`;
+          }).join(', ');
+
+          const bells = item.lesson_bells || {};
+          const pNum = getPairNumberFromStr(bells.start_time || "") || '?';
+
+          const card = document.createElement('div');
+          card.className = 'debug-card';
+          card.innerHTML = `
+            <div class="debug-card-header">
+              <span class="debug-card-title">#${idx + 1} | Пара №${pNum} (${bells.start_time || ''}–${bells.end_time || ''}) | ${dayName} | ${sample.semInfo.label}</span>
+              <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px;" onclick="navigator.clipboard.writeText(this.dataset.json).then(()=>alert('JSON скопирован!'))" data-json="${escapeHtml(JSON.stringify(item, null, 2))}">
+                📋 Скопировать JSON
+              </button>
+            </div>
+            <div class="debug-card-body">
+              <div style="display:flex; flex-wrap:wrap; gap:12px; margin-bottom:10px;">
+                <div><span style="color:var(--text-muted); font-weight:600;">Дисциплина:</span> <b>${escapeHtml(item.subject || '—')}</b></div>
+                <div><span style="color:var(--text-muted); font-weight:600;">Тип:</span> <span class="badge badge-lk">${escapeHtml(item.lesson_type || '—')}</span></div>
+                <div><span style="color:var(--text-muted); font-weight:600;">Даты (${matchedDates.length}):</span> ${escapeHtml(datesFormatted)}</div>
+              </div>
+              <pre class="json-viewer">${escapeHtml(JSON.stringify(item, null, 2))}</pre>
+            </div>
+          `;
+          container.appendChild(card);
+        });
+
+      } catch (err) {
+        showStatus(statusEl, `Ошибка: ${err.message}`, 'error');
+      }
+    }
+  </script>
+</body>
+</html>
