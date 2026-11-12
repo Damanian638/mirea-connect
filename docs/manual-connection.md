@@ -53,3 +53,43 @@ mirea-connect prompt --json
 В JSON обратные косые черты пути Windows должны быть удвоены: `C:\\Users\\…`. Полностью перезапустите Claude. [Официальная справка](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop).
 
 Если установщик сообщил, что файл настроек содержит ошибку JSON, он этот файл не менял. Исправьте ошибку (часто это лишняя запятая перед `}`) или добавьте запись `mirea` вручную, как показано выше, затем повторите установку.
+
+## Google Antigravity (`agy` / Antigravity IDE)
+
+### Через команду CLI (быстрый способ)
+
+В терминале выполните:
+
+```powershell
+agy mcp add mirea -- "ЗАМЕНИТЕ НА command ИЗ ВАШЕГО РЕЗУЛЬТАТА" -m mirea_connect local
+```
+
+Флаг `--` перед аргументами обязателен, чтобы `-m` не воспринимался как флаг самой команды `agy`.
+
+### Через конфигурационный файл вручную
+
+Файл настроек MCP Antigravity находится по пути:
+* **Windows**: `%USERPROFILE%\.gemini\config\mcp_config.json`
+* **macOS / Linux**: `~/.gemini/config/mcp_config.json`
+
+Добавьте секцию `mirea` в объект `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "mirea": {
+      "command": "ЗАМЕНИТЕ НА command ИЗ ВАШЕГО РЕЗУЛЬТАТА",
+      "args": [
+        "-m",
+        "mirea_connect",
+        "local"
+      ],
+      "disabled": false
+    }
+  }
+}
+```
+
+После сохранения перезапустите `agy` или откройте новый чат в Antigravity. Набор инструментов `mirea` станет доступен автоматически.
+
+> **Совет:** Чтобы агент работал автономно без запроса подтверждения на каждый шаг, запустите CLI с флагом `agy --mode auto` или настройте `"agentMode": "auto"` через команду `/config`.

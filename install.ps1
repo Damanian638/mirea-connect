@@ -1,49 +1,65 @@
-# MIREA Connect — установка и обновление одной командой (Windows, PowerShell):
+﻿# MIREA Connect — установка одной командой (Windows, PowerShell):
 #   powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/Damanian638/mirea-connect/main/install.ps1 | iex"
-$ErrorActionPreference = "Stop"
-$Src = "https://github.com/Damanian638/mirea-connect/archive/refs/heads/main.zip"
-$Issues = "https://github.com/Damanian638/mirea-connect/issues"
+# Отдельная область видимости нужна и при запуске через irm | iex.
+& {
+    $ErrorActionPreference = "Stop"
+    $MireaSource = "https://github.com/Damanian638/mirea-connect/archive/refs/heads/main.zip"
 
-# uv печатает пути в UTF-8; без этого путь с кириллицей (C:\Users\Иван) читается кракозябрами.
-$PrevOutputEncoding = [Console]::OutputEncoding
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $PrevOutputEncoding = [Console]::OutputEncoding
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-function Fail([string]$Message) {
+    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+        Write-Host "-> Ставлю uv (менеджер Python от Astral)..."
+        powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+        if ($LASTEXITCODE -ne 0) {
+            throw "Не удалось установить uv. Установка MIREA Connect остановлена."
+        }
+        $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
+        if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+            throw "Команда uv не найдена. Откройте новое окно PowerShell и повторите установку."
+        }
+    }
+
+    $MireaToolsDirectory = uv tool dir
+    if ($LASTEXITCODE -ne 0 -or -not $MireaToolsDirectory) {
+        throw "Не удалось определить папку инструментов uv. Установка остановлена."
+    }
+    $MireaEnvironment = [IO.Path]::GetFullPath((Join-Path $MireaToolsDirectory "mirea-connect"))
+    $MireaEnvironmentPrefix = $MireaEnvironment.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+    $MireaProcesses = @()
+    try {
+        # Не выводим командные строки процессов: в них могут быть личные данные.
+        $MireaProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'python.exe' OR Name = 'pythonw.exe' OR Name = 'mirea-connect.exe'" -ErrorAction Stop |
+            Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($MireaEnvironmentPrefix, [StringComparison]::OrdinalIgnoreCase) })
+    }
+    catch {
+        Write-Host "Не удалось проверить запущенный коннектор. Перед обновлением отключите сервер mirea в своих ИИ-приложениях."
+    }
+    if ($MireaProcesses.Count -gt 0) {
+        throw "MIREA Connect сейчас запущен. Отключите сервер mirea в настройках MCP или полностью закройте использующие его приложения и повторите эту команду. После установки включите сервер снова."
+    }
+
+    Write-Host "-> Ставлю mirea-connect..."
+    uv tool install --force --reinstall --python 3.12 $MireaSource
+    if ($LASTEXITCODE -ne 0) {
+        throw "Установка MIREA Connect не завершена. Если указано 'Отказано в доступе' (os error 5), отключите сервер mirea в ИИ-приложениях или Закройте их и повторите установку. Если ошибка сохраняется, проверьте блокировку антивирусом и права доступа."
+    }
+
+    $MireaBinDirectory = uv tool dir --bin
+    if ($LASTEXITCODE -ne 0 -or -not $MireaBinDirectory) {
+        throw "Не удалось определить путь запуска MIREA Connect. Установка остановлена."
+    }
+    $Bin = Join-Path $MireaBinDirectory "mirea-connect.exe"
+    & "$Bin" --version
+    if ($LASTEXITCODE -ne 0) {
+        throw "MIREA Connect установлен, но не запускается. Подключение к ИИ-приложениям не выполнено."
+    }
+    & "$Bin" install
+    if ($LASTEXITCODE -ne 0) {
+        throw "Не удалось настроить подключение к ИИ-приложению. Повторите команду '$Bin install'."
+    }
+
     [Console]::OutputEncoding = $PrevOutputEncoding
     Write-Host ""
-    Write-Host "Ошибка: $Message" -ForegroundColor Red
-    Write-Host "Установка не завершена. Если ошибка повторяется, сообщите о ней: $Issues"
-    # throw, а не exit: при `irm | iex` в открытом окне exit закрыл бы PowerShell пользователя.
-    # При запуске через `powershell -c` throw даёт ненулевой код возврата.
-    throw "MIREA Connect: $Message"
+    Write-Host "Готово. Команда: $Bin"
 }
-
-if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
-    Write-Host "-> Ставлю uv (менеджер Python от Astral)..."
-    powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-    if ($LASTEXITCODE -ne 0) { Fail "Не удалось установить uv. Проверьте подключение к интернету." }
-    $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
-    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { Fail "uv не найден после установки. Откройте новое окно PowerShell и повторите." }
-}
-
-Write-Host "-> Ставлю mirea-connect..."
-# --reinstall: при повторном запуске заново скачать main, а не взять старую копию из кеша.
-uv tool install --force --reinstall --python 3.12 $Src
-if ($LASTEXITCODE -ne 0) {
-    Fail ("Не удалось установить MIREA Connect (см. сообщения uv выше). " +
-          "Если там «Отказано в доступе» / «Access is denied» или «used by another process», " +
-          "значит, файлы заняты запущенным коннектором: Закройте Claude, ChatGPT / Codex, Cursor " +
-          "(в том числе значок возле часов) и повторите команду.")
-}
-
-$BinDir = uv tool dir --bin
-if ($LASTEXITCODE -ne 0 -or -not $BinDir) { Fail "Не удалось определить каталог программ uv." }
-$Bin = Join-Path ($BinDir | Select-Object -First 1).Trim() "mirea-connect.exe"
-if (-not (Test-Path -LiteralPath $Bin)) { Fail "Не найдена установленная программа: $Bin" }
-
-[Console]::OutputEncoding = $PrevOutputEncoding
-& "$Bin" install
-if ($LASTEXITCODE -ne 0) { Fail "MIREA Connect установлен, но не удалось подключить его к приложению (см. выше)." }
-
-Write-Host ""
-Write-Host "Готово. Команда: $Bin"

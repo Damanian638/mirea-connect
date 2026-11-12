@@ -17,6 +17,7 @@ def env(tmp_path, monkeypatch):
     desktop.parent.mkdir(parents=True)
     monkeypatch.setattr(installer, "claude_desktop_config", lambda: desktop)
     monkeypatch.setattr(installer, "cursor_config", lambda: tmp_path / "no-cursor" / "mcp.json")
+    monkeypatch.setattr(installer, "antigravity_config", lambda: tmp_path / "no-gemini" / "mcp_config.json")
     monkeypatch.setattr(installer.shutil, "which", lambda name: None)
     for var in ("CODEX_HOME", "HERMES_HOME", "OPENCLAW_HOME"):
         monkeypatch.setenv(var, str(tmp_path / var))
@@ -37,7 +38,9 @@ def test_config_with_utf8_bom_keeps_other_servers(env):
     assert data["mcpServers"]["mirea"]["args"] == ["-m", "mirea_connect", "local"]
 
 
-@pytest.mark.parametrize("broken", ['{"mcpServers": {"other": {"command": "x"},}}', "{", '{"mcpServers": []}', "[1, 2]"])
+@pytest.mark.parametrize(
+    "broken", ['{"mcpServers": {"other": {"command": "x"},}}', "{", '{"mcpServers": []}', "[1, 2]"]
+)
 def test_unreadable_config_is_left_untouched_and_install_fails(env, broken, capsys):
     env.write_text(broken, encoding="utf-8")
     assert installer.install(True, mode="all") != 0
@@ -94,3 +97,22 @@ def test_partial_failure_reports_both(env, tmp_path, monkeypatch, capsys):
 
 def test_choosing_only_prompt_is_success(env):
     assert installer.install(True, mode="prompt") == 0
+
+
+def test_antigravity_merge_json(tmp_path, monkeypatch):
+    agy_cfg = tmp_path / "gemini" / "config" / "mcp_config.json"
+    agy_cfg.parent.mkdir(parents=True)
+    agy_cfg.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(installer, "antigravity_config", lambda: agy_cfg)
+    monkeypatch.setattr(installer, "claude_desktop_config", lambda: tmp_path / "no-claude" / "claude.json")
+    monkeypatch.setattr(installer, "cursor_config", lambda: tmp_path / "no-cursor" / "mcp.json")
+    monkeypatch.setattr(installer.shutil, "which", lambda name: None)
+    for var in ("CODEX_HOME", "HERMES_HOME", "OPENCLAW_HOME"):
+        monkeypatch.setenv(var, str(tmp_path / var))
+    monkeypatch.setenv("PYMIREA_HOME", str(tmp_path / "pm"))
+    assert installer.install(True, mode="all") == 0
+    data = json.loads(agy_cfg.read_text(encoding="utf-8"))
+    assert "mirea" in data["mcpServers"]
+    assert installer.install(False) == 0
+    data_after = json.loads(agy_cfg.read_text(encoding="utf-8"))
+    assert "mirea" not in data_after.get("mcpServers", {})

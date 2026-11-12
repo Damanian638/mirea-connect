@@ -55,7 +55,11 @@ def claude_desktop_config() -> Path:
     if system == "Darwin":
         return Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
     if system == "Windows":
-        return Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "Claude" / "claude_desktop_config.json"
+        return (
+            Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+            / "Claude"
+            / "claude_desktop_config.json"
+        )
     return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "Claude" / "claude_desktop_config.json"
 
 
@@ -73,6 +77,10 @@ def hermes_config() -> Path:
 
 def openclaw_config() -> Path:
     return Path(os.environ.get("OPENCLAW_HOME") or Path.home() / ".openclaw") / "openclaw.json"
+
+
+def antigravity_config() -> Path:
+    return Path(os.environ.get("GEMINI_CONFIG_HOME") or Path.home() / ".gemini" / "config") / "mcp_config.json"
 
 
 def _atomic_write(path: Path, text: str) -> None:
@@ -183,7 +191,9 @@ def edit_hermes_yaml(text: str, add: bool) -> tuple[str, bool]:
         raise ValueError("mcp_servers записан в одну строку — добавьте коннектор вручную")
 
     end = top + 1
-    while end < len(lines) and (not lines[end].strip() or _indent(lines[end]) > 0 or lines[end].lstrip().startswith("#")):
+    while end < len(lines) and (
+        not lines[end].strip() or _indent(lines[end]) > 0 or lines[end].lstrip().startswith("#")
+    ):
         end += 1
     children = [i for i in range(top + 1, end) if lines[i].strip() and not lines[i].lstrip().startswith("#")]
     child_indent = min((_indent(lines[i]) for i in children), default=2)
@@ -232,7 +242,9 @@ def _openclaw(add: bool) -> bool:
     payload = json.dumps({"command": cmd[0], "args": cmd[1:]}, ensure_ascii=False)
     if not exe:
         if openclaw_config().exists() and add:
-            print(f"  ! OpenClaw найден, но команды openclaw нет в PATH. Выполните:\n    openclaw mcp set {NAME} '{payload}'")
+            print(
+                f"  ! OpenClaw найден, но команды openclaw нет в PATH. Выполните:\n    openclaw mcp set {NAME} '{payload}'"
+            )
         return False
     if not add:
         r = subprocess.run([exe, "mcp", "unset", NAME], capture_output=True, text=True)
@@ -286,11 +298,28 @@ def _claude_code(add: bool) -> bool:
     subprocess.run([claude, "mcp", "remove", "--scope", "user", NAME], capture_output=True)
     if not add:
         return True
-    r = subprocess.run([claude, "mcp", "add", "--scope", "user", NAME, "--", *server_command()], capture_output=True, text=True)
+    r = subprocess.run(
+        [claude, "mcp", "add", "--scope", "user", NAME, "--", *server_command()], capture_output=True, text=True
+    )
     if r.returncode != 0:
         print(f"  ! Claude Code: {r.stderr.strip() or r.stdout.strip()}")
         return False
     return True
+
+
+def _antigravity(add: bool) -> bool:
+    agy = shutil.which("agy")
+    if agy:
+        cmd = [agy, "mcp"]
+        if not add:
+            r = subprocess.run([*cmd, "remove", NAME], capture_output=True, text=True)
+            return r.returncode == 0
+        r = subprocess.run([*cmd, "add", NAME, "--", *server_command()], capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"  ! Antigravity (agy): {(r.stderr or r.stdout).strip()}")
+            return False
+        return True
+    return _merge_json(antigravity_config(), add)
 
 
 PROMPT_CHOICE = "prompt"
@@ -300,11 +329,17 @@ def _clients() -> list[tuple[str, Callable[[], bool], Callable[[bool], bool]]]:
     """(название, найден ли клиент, применить add/remove)."""
     desktop = claude_desktop_config()
     cursor = cursor_config()
+    agy_cfg = antigravity_config()
     return [
         ("Claude Desktop", lambda: desktop.parent.exists() or desktop.exists(), lambda add: _merge_json(desktop, add)),
         ("Claude Code", lambda: bool(shutil.which("claude")), _claude_code),
         ("Cursor", lambda: cursor.parent.exists(), lambda add: _merge_json(cursor, add)),
         ("Codex", lambda: bool(shutil.which("codex")) or codex_config().parent.exists(), _codex),
+        (
+            "Antigravity (agy)",
+            lambda: bool(shutil.which("agy")) or agy_cfg.parent.exists() or agy_cfg.exists(),
+            _antigravity,
+        ),
         ("Hermes Agent", lambda: bool(shutil.which("hermes")) or hermes_config().parent.exists(), _hermes),
         ("OpenClaw", lambda: bool(shutil.which("openclaw")) or openclaw_config().exists(), _openclaw),
     ]
@@ -322,7 +357,9 @@ def choose(found: list[str], ask: Callable[[str], str] = _ask) -> list[str]:
     options = [*found, PROMPT_CHOICE]
     print("\nКуда подключить MIREA Connect?\n")
     for n, name in enumerate(options, 1):
-        label = "Другой агент или харнесс — показать промпт, он подключит коннектор сам" if name == PROMPT_CHOICE else name
+        label = (
+            "Другой агент или харнесс — показать промпт, он подключит коннектор сам" if name == PROMPT_CHOICE else name
+        )
         print(f"  {n}) {label}")
     default = "все найденные" if found else str(len(options))
     while True:
@@ -339,13 +376,24 @@ def choose(found: list[str], ask: Callable[[str], str] = _ask) -> list[str]:
 
 
 def _copy_to_clipboard(text: str) -> bool:
-    candidates = [["pbcopy"], ["clip"], ["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]]
+    candidates = [
+        ["pbcopy"],
+        ["clip"],
+        ["wl-copy"],
+        ["xclip", "-selection", "clipboard"],
+        ["xsel", "--clipboard", "--input"],
+    ]
     for cmd in candidates:
         exe = shutil.which(cmd[0])
         if not exe:
             continue
         try:
-            r = subprocess.run([exe, *cmd[1:]], input=text.encode("utf-16le" if cmd[0] == "clip" else "utf-8"), capture_output=True, timeout=5)
+            r = subprocess.run(
+                [exe, *cmd[1:]],
+                input=text.encode("utf-16le" if cmd[0] == "clip" else "utf-8"),
+                capture_output=True,
+                timeout=5,
+            )
             if r.returncode == 0:
                 return True
         except Exception:
@@ -405,8 +453,10 @@ def install(add: bool = True, mode: str = "auto") -> int:
             print(f"  ✓ {d}")
     if failed:
         verb = "подключить" if add else "отключить"
-        print(f"\nНе удалось {verb}: {', '.join(failed)}. Причина указана выше; "
-              "закройте эти программы и повторите установку или используйте ручное подключение.")
+        print(
+            f"\nНе удалось {verb}: {', '.join(failed)}. Причина указана выше; "
+            "закройте эти программы и повторите установку или используйте ручное подключение."
+        )
     if add and not done and PROMPT_CHOICE not in selected:
         selected.append(PROMPT_CHOICE)
     elif not add and not done and not failed:
@@ -414,7 +464,9 @@ def install(add: bool = True, mode: str = "auto") -> int:
 
     if add and PROMPT_CHOICE in selected:
         if not found:
-            print("\nНе нашёл ни одного известного клиента (Claude Desktop, Claude Code, Cursor, Codex, Hermes, OpenClaw).")
+            print(
+                "\nНе нашёл ни одного известного клиента (Claude Desktop, Claude Code, Cursor, Codex, Hermes, OpenClaw)."
+            )
         show_prompt()
     if add:
         if done:
@@ -427,8 +479,10 @@ def install(add: bool = True, mode: str = "auto") -> int:
 
 def _describe(e: Exception) -> str:
     if isinstance(e, PermissionError):
-        return (f"нет доступа к {e.filename or 'файлу настроек'} — файл занят или защищён. "
-                "Закройте программу-клиент и повторите.")
+        return (
+            f"нет доступа к {e.filename or 'файлу настроек'} — файл занят или защищён. "
+            "Закройте программу-клиент и повторите."
+        )
     return str(e) or type(e).__name__
 
 
