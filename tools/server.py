@@ -12,11 +12,11 @@ from __future__ import annotations
 import asyncio
 import http.server
 import json
-from pathlib import Path
 import socketserver
 import sys
 import traceback
 import webbrowser
+from pathlib import Path
 
 TOOLS_DIR = Path(__file__).resolve().parent
 
@@ -30,11 +30,11 @@ for base_dir in (TOOLS_DIR, TOOLS_DIR.parent):
 def _ensure_runtime_dependencies():
     missing = []
     try:
-        import pymirea
+        import pymirea  # noqa: F401 - import verifies the installed runtime
     except ImportError:
         missing.append("pymirea")
     try:
-        import openpyxl
+        import openpyxl  # noqa: F401 - import verifies the installed runtime
     except ImportError:
         missing.append("openpyxl")
 
@@ -54,7 +54,8 @@ def _ensure_runtime_dependencies():
 
 _ensure_runtime_dependencies()
 
-from pymirea.schedule import MireaSchedule
+from pymirea.schedule import MireaSchedule  # noqa: E402 - dependencies are checked first
+
 try:
     from pymirea.schedule import SCHEDULE_ORGANIZATION_ID
 except ImportError:

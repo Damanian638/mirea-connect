@@ -6,10 +6,9 @@
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 # Определение каталогов относительно расположения start.py
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -91,7 +90,7 @@ def setup_dependencies() -> Path | str:
 def main():
     server_py = find_server_script()
     if not server_py:
-        print(f"[!] Ошибка: файл server.py не найден ни в tools/, ни в корне!", file=sys.stderr)
+        print("[!] Ошибка: файл server.py не найден ни в tools/, ни в корне!", file=sys.stderr)
         sys.exit(1)
 
     py_exe = setup_dependencies()

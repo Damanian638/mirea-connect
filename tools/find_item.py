@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from datetime import datetime, timedelta
 import json
-from pathlib import Path
 import re
 import sys
+from datetime import datetime, timedelta
+from pathlib import Path
 
 # Корректное добавление пути к src/ как при запуске из корня проекта, так и из tools/
 for base_dir in (Path(__file__).resolve().parent, Path(__file__).resolve().parent.parent):
