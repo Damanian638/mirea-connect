@@ -14,6 +14,7 @@ from pymirea.schedule import MireaSchedule, Schedule
 
 from .pulse import MireaGrades
 from .sdo import MireaSDO
+from .sdo_course import CourseError, CourseSDO
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +189,22 @@ async def sdo_overview(cookies: dict, *, deadline_limit: int = 50) -> dict:
 
 
 # --- публичное ---
+
+
+async def sdo_course_operation(cookies: dict, operation: str, **kwargs) -> dict:
+    """Shared lifecycle; Moodle failures must never revoke the Pulse session."""
+    api = CourseSDO(session_cookies=cookies)
+    try:
+        return await getattr(api, operation)(**kwargs)
+    except CourseError as exc:
+        raise ServiceError(str(exc)) from None
+    except httpx.HTTPError:
+        raise ServiceError(
+            "Ошибка связи с СДО. Если операция сохраняла данные, результат неизвестен: "
+            "прочитайте структуру курса перед повтором. Запрос автоматически не повторяется."
+        ) from None
+    finally:
+        await api.close()
 
 
 async def _search(sched: MireaSchedule, kind: str, query: str):

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mirea-connect"
-version = "0.1.0"
+version = "0.2.0"
 description = "MCP-коннектор к Пульсу и расписанию РТУ МИРЭА (OAuth, self-host)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -17,6 +17,7 @@ dependencies = [
     "pymirea @ https://github.com/atomic-pancake-49/pymirea/archive/b4af5fcfbc6d34bc1986ae8cec2298d95aa7901e.zip",
     "mcp>=2.3,<3",
     "uvicorn>=0.30",
+    "pypdf>=5",
 ]
 
 [project.optional-dependencies]
