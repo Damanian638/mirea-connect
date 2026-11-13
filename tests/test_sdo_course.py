@@ -369,10 +369,10 @@ async def test_assign_submissions_listing_and_filtering():
         </tr>
         <tr>
           <td><input type="checkbox"></td>
-          <td class="cell c1 username"><a href="{BASE}/user/view.php?id=84838&course=1"><span class="userinitials">МБ</span>Макаров Богдан Борисович</a></td>
+          <td class="cell c1 username"><a href="{BASE}/user/view.php?id=84838&course=1"><span class="userinitials">ПП</span>Петров Петр Петрович</a></td>
           <td class="cell c2 idnumber">24Т1172</td>
-          <td class="cell c3 email">makarov.b.b@edu.mirea.ru</td>
-          <td class="cell c4 department">ЭФБО-18-24</td>
+          <td class="cell c3 email">petrov.p.p@edu.mirea.ru</td>
+          <td class="cell c4 department">ИВБО-02-24</td>
           <td class="cell c5 status"></td>
           <td class="cell c6 grade">Оценка пользователя / 3,0 <a href="{BASE}/mod/assign/view.php?id=20&action=grader&userid=84838">Оценка</a></td>
           <td class="cell c7">пятница, 6 ноября 2026, 01:34</td>
@@ -396,12 +396,12 @@ async def test_assign_submissions_listing_and_filtering():
             assert len(res_all["submissions"]) == 2
 
             # Filter by query
-            res_makarov = await api.assign_submissions(1, 20, query="Макаров")
-            assert res_makarov["total_matches"] == 1
-            sub = res_makarov["submissions"][0]
+            res_petrov = await api.assign_submissions(1, 20, query="Петров")
+            assert res_petrov["total_matches"] == 1
+            sub = res_petrov["submissions"][0]
             assert sub["user_id"] == 84838
-            assert sub["name"] == "Макаров Богдан Борисович"
-            assert sub["group"] == "ЭФБО-18-24"
+            assert sub["name"] == "Петров Петр Петрович"
+            assert sub["group"] == "ИВБО-02-24"
             assert sub["status"] == "Сдано"
             assert sub["files"][0]["name"] == "report.docx"
             assert sub["grade"] is None

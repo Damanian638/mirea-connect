@@ -205,8 +205,8 @@ def register_tools(mcp: Any, source: Source) -> Callable:
         course_id: int, cmid: int, query: str | None = None, group: str | None = None, limit: int = 50
     ) -> dict:
         """Таблица сданных ответов на задание (assign): студенты, даты сдачи, файлы, статус и оценки.
-        course_id и cmid берутся из sdo_course. query — поиск по фамилии/имени/email/группе («Макаров»);
-        group — фильтр по названию группы («ЭФБО-18-24»). limit — макс. число записей (по умолчанию 50, 0 — все)."""
+        course_id и cmid берутся из sdo_course. query — поиск по фамилии/имени/email/группе («Иванов»);
+        group — фильтр по названию группы («ИВБО-01-24»). limit — макс. число записей (по умолчанию 50, 0 — все)."""
         return await course_op(
             "assign_submissions", course_id=course_id, cmid=cmid, query=query, group=group, limit=limit
         )
