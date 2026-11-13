@@ -201,6 +201,45 @@ def register_tools(mcp: Any, source: Source) -> Callable:
         return await course_op("add_questions", course_id=course_id, cmid=cmid, questions=questions)
 
     @tool()
+    async def sdo_assign_submissions(
+        course_id: int, cmid: int, query: str | None = None, group: str | None = None, limit: int = 50
+    ) -> dict:
+        """Таблица сданных ответов на задание (assign): студенты, даты сдачи, файлы, статус и оценки.
+        course_id и cmid берутся из sdo_course. query — поиск по фамилии/имени/email/группе («Макаров»);
+        group — фильтр по названию группы («ЭФБО-18-24»). limit — макс. число записей (по умолчанию 50, 0 — все)."""
+        return await course_op(
+            "assign_submissions", course_id=course_id, cmid=cmid, query=query, group=group, limit=limit
+        )
+
+    @tool()
+    async def sdo_read_submission_file(course_id: int, cmid: int, file_url: str) -> dict:
+        """Извлечь текст из прикреплённого студентом файла ответа (PDF, DOCX, TXT, C, CPP, ASM, PY, JSON и др.).
+        file_url берётся строго из files ответа sdo_assign_submissions. До 25 МБ, текст до 120000 символов."""
+        return await course_op("read_submission_file", course_id=course_id, cmid=cmid, file_url=file_url)
+
+    @tool(COURSE_WRITE)
+    async def sdo_download_submission_file(
+        course_id: int, cmid: int, file_url: str, save_path: str | None = None
+    ) -> dict:
+        """Скачать прикреплённый студентом файл ответа на диск компьютера (до 50 МБ).
+        file_url берётся из files ответа sdo_assign_submissions. save_path — путь сохранения файла
+        (по умолчанию сохраняет в папку «Загрузки»/Downloads на компьютере)."""
+        return await course_op(
+            "download_submission_file", course_id=course_id, cmid=cmid, file_url=file_url, save_path=save_path
+        )
+
+    @tool(COURSE_WRITE)
+    async def sdo_grade_submission(
+        course_id: int, cmid: int, user_id: int, grade: str, feedback: str = ""
+    ) -> dict:
+        """Выставить оценку и отзыв за ответ на задание (assign) в СДО.
+        user_id берётся из sdo_assign_submissions. grade — оценка («3», «5», «4.5»).
+        feedback — рецензия/комментарий преподавателя. Вызывай только по явному подтверждению пользователя."""
+        return await course_op(
+            "grade_submission", course_id=course_id, cmid=cmid, user_id=user_id, grade=grade, feedback=feedback
+        )
+
+    @tool()
     async def search_timetable(kind: str, query: str) -> list[dict]:
         """Поиск в публичном расписании. kind: group | teacher | classroom. Возвращает совпадения с uid."""
         return await S.search(kind, query)

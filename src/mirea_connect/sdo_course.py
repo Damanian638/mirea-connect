@@ -11,8 +11,12 @@ import html
 import io
 import json
 import logging
+import re
+import xml.etree.ElementTree as ET
+import zipfile
+from pathlib import Path
 from typing import Literal
-from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
+from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlsplit
 
 import httpx
 from bs4 import BeautifulSoup, Tag
@@ -95,6 +99,23 @@ def form_values(form: Tag) -> dict[str, str | list[str]]:
 
 def plain_html(text: str) -> str:
     return "<p>" + html.escape(text).replace("\n", "<br>\n") + "</p>"
+
+
+def extract_docx_text(raw: bytes) -> str:
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            if "word/document.xml" not in z.namelist():
+                return ""
+            tree = ET.fromstring(z.read("word/document.xml"))
+            ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+            paras = []
+            for p in tree.iter(f"{{{ns}}}p"):
+                texts = [node.text for node in p.iter(f"{{{ns}}}t") if node.text]
+                if texts:
+                    paras.append("".join(texts))
+            return "\n".join(paras)
+    except Exception:
+        return ""
 
 
 def content_marker(course_id: int, section: int, module: str, name: str, content: str, external_url: str | None) -> str:
@@ -245,6 +266,12 @@ class CourseSDO(MireaSDO):
                 raise CourseError(
                     "Не удалось извлечь текст PDF. Возможно, файл защищён или содержит только сканы."
                 ) from None
+        elif file["name"].lower().endswith(".docx"):
+            text = extract_docx_text(raw)
+            if not text:
+                raise CourseError("Не удалось извлечь текст из документа DOCX.")
+            truncated = len(text) > 120000
+            text = text[:120000]
         elif file["name"].lower().endswith((".txt", ".csv", ".md")):
             try:
                 text = raw.decode("utf-8-sig")
@@ -584,3 +611,265 @@ class CourseSDO(MireaSDO):
         if final["count"] != state["count"] + len(questions):
             raise CourseError(f"Число вопросов в cmid={cmid} не совпало с ожидаемым. Проверьте тест перед повтором.")
         return {**final, "added": added}
+
+    async def assign_submissions(
+        self, course_id: int, cmid: int, query: str | None = None, group: str | None = None, limit: int = 50
+    ) -> dict:
+        positive(course_id, "course_id")
+        positive(cmid, "cmid")
+        activity = await self.activity_in_course(course_id, cmid)
+        if activity["type"] != "assign":
+            raise CourseError(f"Элемент cmid={cmid} имеет тип '{activity['type']}', а не 'assign'.")
+
+        await self.ready()
+        _, soup = await self.page(f"/mod/assign/view.php?id={cmid}&action=grading")
+        table = soup.select_one("table.flexible, table.generaltable")
+        if not table:
+            raise CourseError("Таблица ответов недоступна: возможно, у вас нет прав преподавателя на оценивание.")
+
+        rows = []
+        q_low = query.strip().lower() if query else None
+        grp_low = group.strip().lower() if group else None
+
+        for tr in table.select("tbody tr"):
+            cells = tr.select("td")
+            if not cells or len(cells) < 7:
+                continue
+
+            user_link = tr.select_one("a[href*='/user/view.php']")
+            if not user_link:
+                continue
+
+            user_href = user_link["href"]
+            user_id_m = re.search(r"id=(\d+)", user_href)
+            user_id = int(user_id_m.group(1)) if user_id_m else None
+
+            user_link_copy = BeautifulSoup(str(user_link), "html.parser").a
+            if user_link_copy:
+                for init_node in user_link_copy.select(".userinitials"):
+                    init_node.decompose()
+                user_name = user_link_copy.get_text(" ", strip=True)
+            else:
+                user_name = user_link.get_text(" ", strip=True)
+
+            idnumber_td = tr.select_one("td.idnumber, td.c2")
+            student_id = idnumber_td.get_text(strip=True) if idnumber_td else ""
+
+            email_td = tr.select_one("td.email, td.c3")
+            email = email_td.get_text(strip=True) if email_td else ""
+
+            dept_td = tr.select_one("td.department, td.c4")
+            dept = dept_td.get_text(strip=True) if dept_td else ""
+
+            status_td = tr.select_one("td.status, td.c5")
+            status = status_td.get_text(" ", strip=True) if status_td else ""
+
+            grade_td = tr.select_one("td.grade, td.c6")
+            grade_text = grade_td.get_text(" ", strip=True) if grade_td else ""
+            current_grade = None
+            max_grade = None
+            if "/" in grade_text:
+                parts = grade_text.split("/")
+                first = parts[0].replace("Оценка пользователя", "").replace("Оценка", "").strip()
+                if first and any(c.isdigit() for c in first):
+                    current_grade = first
+                second = parts[1].split()[0].strip() if len(parts) > 1 else ""
+                if second and any(c.isdigit() for c in second):
+                    max_grade = second
+            elif grade_text:
+                clean_g = grade_text.replace("Оценка пользователя", "").replace("Оценка", "").strip()
+                if clean_g and any(c.isdigit() for c in clean_g):
+                    current_grade = clean_g
+
+            date_td = tr.select_one("td.timemodified, td.c7")
+            submitted_at = date_td.get_text(" ", strip=True) if date_td else None
+            if submitted_at in {"-", ""}:
+                submitted_at = None
+
+            files = []
+            files_td = tr.select_one("td.c9, td[class*='assignsubmission_file']")
+            if files_td:
+                for a in files_td.select("a[href*='/pluginfile.php/']"):
+                    f_url = trusted_url(a["href"])
+                    f_name = a.get_text(" ", strip=True)
+                    if f_url and f_url not in [f["url"] for f in files]:
+                        files.append({"name": f_name, "url": f_url})
+
+            text_td = tr.select_one("td.c8, td[class*='assignsubmission_onlinetext']")
+            online_text = text_td.get_text(" ", strip=True) if text_td else None
+            if online_text in {"-", ""}:
+                online_text = None
+
+            feedback_td = tr.select_one("td.c12, td[class*='assignfeedbackcomments']")
+            feedback = feedback_td.get_text(" ", strip=True) if feedback_td else None
+            if feedback in {"-", "", "Отзыв в виде комментария"}:
+                feedback = None
+
+            if not status or status == "-":
+                status = "Сдано" if (files or online_text) else "Нет ответа"
+
+            if q_low:
+                search_space = f"{user_name} {student_id} {email} {dept}".lower()
+                if q_low not in search_space:
+                    continue
+
+            if grp_low:
+                if grp_low not in dept.lower():
+                    continue
+
+            rows.append({
+                "user_id": user_id,
+                "name": user_name,
+                "student_id": student_id,
+                "email": email,
+                "group": dept,
+                "status": status,
+                "grade": current_grade,
+                "grade_max": max_grade,
+                "submitted_at": submitted_at,
+                "files": files,
+                "online_text": online_text,
+                "feedback": feedback,
+            })
+
+        total = len(rows)
+        paged = rows[:limit] if (limit and limit > 0) else rows
+        return {
+            "course_id": course_id,
+            "cmid": cmid,
+            "activity_name": activity["name"],
+            "total_matches": total,
+            "submissions": paged,
+        }
+
+    async def read_submission_file(self, course_id: int, cmid: int, file_url: str) -> dict:
+        positive(course_id, "course_id")
+        positive(cmid, "cmid")
+        await self.ready()
+        url = trusted_url(file_url)
+        if "/pluginfile.php/" not in url:
+            raise CourseError("Ссылка на файл должна вести на вложение в СДО (/pluginfile.php/).")
+
+        async with self.client.stream("GET", url, follow_redirects=False) as response:
+            if response.status_code != 200:
+                raise CourseError("СДО не разрешила скачивание файла ответа.")
+            chunks = bytearray()
+            async for chunk in response.aiter_bytes():
+                chunks.extend(chunk)
+                if len(chunks) > 25 * 1024 * 1024:
+                    raise CourseError("Файл ответа превышает ограничение 25 МБ.")
+        raw = bytes(chunks)
+        filename = unquote(urlsplit(url).path.split("/")[-1]) or f"submission_{cmid}.bin"
+        if raw.startswith(b"%PDF-"):
+            try:
+                reader = PdfReader(io.BytesIO(raw))
+                texts = []
+                size = 0
+                for page in reader.pages[:200]:
+                    part = page.extract_text() or ""
+                    texts.append(part)
+                    size += len(part)
+                    if size > 120000:
+                        break
+                text = "\n\n".join(texts)
+                truncated = len(reader.pages) > len(texts) or len(text) > 120000
+            except Exception:
+                raise CourseError("Не удалось извлечь текст PDF. Возможно, файл защищён или содержит только сканы.")
+        elif filename.lower().endswith(".docx"):
+            text = extract_docx_text(raw)
+            if not text:
+                raise CourseError("Не удалось извлечь текст из документа DOCX.")
+            truncated = len(text) > 120000
+            text = text[:120000]
+        elif filename.lower().endswith(
+            (".txt", ".csv", ".md", ".c", ".h", ".cpp", ".asm", ".s", ".py", ".json", ".xml", ".ino")
+        ):
+            try:
+                text = raw.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                text = raw.decode("cp1251", errors="replace")
+            truncated = len(text) > 120000
+            text = text[:120000]
+        else:
+            raise CourseError(
+                f"Формат файла '{filename}' не поддерживается для извлечения текста. "
+                "Используйте sdo_download_submission_file для сохранения файла на диск."
+            )
+
+        return {"name": filename, "text": text, "truncated": truncated, "size_bytes": len(raw)}
+
+    async def download_submission_file(
+        self, course_id: int, cmid: int, file_url: str, save_path: str | None = None
+    ) -> dict:
+        positive(course_id, "course_id")
+        positive(cmid, "cmid")
+        await self.ready()
+        url = trusted_url(file_url)
+        if "/pluginfile.php/" not in url:
+            raise CourseError("Ссылка на файл должна вести на вложение в СДО (/pluginfile.php/).")
+
+        filename = unquote(urlsplit(url).path.split("/")[-1]) or f"submission_{cmid}.bin"
+
+        async with self.client.stream("GET", url, follow_redirects=False) as response:
+            if response.status_code != 200:
+                raise CourseError("СДО не разрешила скачивание файла ответа.")
+            chunks = bytearray()
+            async for chunk in response.aiter_bytes():
+                chunks.extend(chunk)
+                if len(chunks) > 50 * 1024 * 1024:
+                    raise CourseError("Файл ответа превышает ограничение 50 МБ.")
+        raw = bytes(chunks)
+
+        if save_path:
+            target = Path(save_path).expanduser().resolve()
+            if target.is_dir():
+                target = target / filename
+        else:
+            downloads = Path.home() / "Downloads"
+            target_dir = downloads if downloads.exists() else Path.cwd()
+            target = target_dir / filename
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
+
+        return {"name": filename, "saved_to": str(target), "size_bytes": len(raw)}
+
+    async def grade_submission(
+        self, course_id: int, cmid: int, user_id: int, grade: str | float, feedback: str = ""
+    ) -> dict:
+        positive(course_id, "course_id")
+        positive(cmid, "cmid")
+        positive(user_id, "user_id")
+        activity = await self.activity_in_course(course_id, cmid)
+        if activity["type"] != "assign":
+            raise CourseError(f"Элемент cmid={cmid} имеет тип '{activity['type']}', а не 'assign'.")
+
+        await self.ready()
+        path = f"/mod/assign/view.php?id={cmid}&action=grade&userid={user_id}"
+        _, soup = await self.page(path)
+        form = soup.find("input", attrs={"name": "action", "value": "submitgrade"})
+        form = form.find_parent("form") if form else None
+        if not form:
+            raise CourseError("Форма оценивания задания не найдена: возможно, нет прав преподавателя.")
+
+        values = form_values(form)
+        if not values.get("sesskey"):
+            raise CourseError("В форме отсутствует защита сессии; операция остановлена.")
+
+        values["grade"] = str(grade).replace(",", ".")
+        if feedback:
+            for k in list(values.keys()):
+                if "assignfeedbackcomments" in k and "[text]" in k:
+                    values[k] = feedback
+
+        values["savegrade"] = "Сохранить"
+        await self.page("/mod/assign/view.php", data=values)
+
+        return {
+            "course_id": course_id,
+            "cmid": cmid,
+            "user_id": user_id,
+            "grade": str(grade),
+            "feedback": feedback,
+            "status": "graded",
+        }

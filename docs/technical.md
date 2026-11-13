@@ -164,6 +164,10 @@ mirea-connect timetable --help
 | `sdo_set_visibility` | `course_id`, `cmid`, `hidden` | Скрыть/опубликовать элемент |
 | `sdo_quiz_questions` | `course_id`, `cmid` | Состав и количество вопросов теста |
 | `sdo_add_quiz_questions` | `course_id`, `cmid`, `questions` | Добавить вопросы в скрытый тест |
+| `sdo_assign_submissions` | `course_id`, `cmid`, `query`, `group`, `limit` | Таблица сданных работ по заданию (assign), фильтр по ФИО/группе |
+| `sdo_read_submission_file` | `course_id`, `cmid`, `file_url` | Извлечь текст файла ответа студента (PDF, DOCX, TXT, C/ASM и др.) |
+| `sdo_download_submission_file` | `course_id`, `cmid`, `file_url`, `save_path` | Скачать файл ответа студента на диск |
+| `sdo_grade_submission` | `course_id`, `cmid`, `user_id`, `grade`, `feedback` | Выставить оценку и текстовый отзыв за ответ на задание |
 | `whoami` | — | Режим подключения и наличие сохранённой сессии |
 | `login` | `open_browser` | Локальная страница входа; только stdio |
 | `delete_my_data` | — | Удаление сохранённой сессии; на удалённом сервере также отзываются токены пользователя |

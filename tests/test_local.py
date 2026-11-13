@@ -239,6 +239,7 @@ def test_install_prompt_choice_and_no_clients(tmp_path, monkeypatch, capsys):
         monkeypatch.setenv(var, str(tmp_path / var))
     monkeypatch.setattr(installer, "claude_desktop_config", lambda: tmp_path / "x" / "c.json")
     monkeypatch.setattr(installer, "cursor_config", lambda: tmp_path / "y" / "mcp.json")
+    monkeypatch.setattr(installer, "antigravity_config", lambda: tmp_path / "z" / "mcp.json")
     monkeypatch.setattr(installer.shutil, "which", lambda n: None)
 
     installer.install(True, mode="all")  # клиентов нет → сразу промпт

@@ -40,6 +40,7 @@ packages = ["src/mirea_connect"]
 [tool.ruff]
 target-version = "py311"
 line-length = 120
+extend-exclude = ["outputs"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
@@ -48,3 +49,4 @@ ignore = ["E501", "E741"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
