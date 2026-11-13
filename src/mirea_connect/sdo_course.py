@@ -835,7 +835,7 @@ class CourseSDO(MireaSDO):
         return {"name": filename, "saved_to": str(target), "size_bytes": len(raw)}
 
     async def grade_submission(
-        self, course_id: int, cmid: int, user_id: int, grade: str | float, feedback: str = ""
+        self, course_id: int, cmid: int, user_id: int, grade: str | float, feedback: str | None = None
     ) -> dict:
         positive(course_id, "course_id")
         positive(cmid, "cmid")
@@ -857,7 +857,7 @@ class CourseSDO(MireaSDO):
             raise CourseError("В форме отсутствует защита сессии; операция остановлена.")
 
         values["grade"] = str(grade).replace(",", ".")
-        if feedback:
+        if feedback is not None:
             for k in list(values.keys()):
                 if "assignfeedbackcomments" in k and "[text]" in k:
                     values[k] = feedback

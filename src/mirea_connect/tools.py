@@ -230,7 +230,7 @@ def register_tools(mcp: Any, source: Source) -> Callable:
 
     @tool(COURSE_WRITE)
     async def sdo_grade_submission(
-        course_id: int, cmid: int, user_id: int, grade: str, feedback: str = ""
+        course_id: int, cmid: int, user_id: int, grade: str, feedback: str | None = None
     ) -> dict:
         """Выставить оценку и отзыв за ответ на задание (assign) в СДО.
         user_id берётся из sdo_assign_submissions. grade — оценка («3», «5», «4.5»).
