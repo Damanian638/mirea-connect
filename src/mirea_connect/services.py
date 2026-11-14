@@ -7,6 +7,7 @@ import re
 from dataclasses import asdict
 from datetime import date as _date
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import httpx
 from pymirea.acs import MireaACS
@@ -419,3 +420,212 @@ async def free_rooms(
             out["available_campuses"] = campuses
     total = len(free)
     return {**head, "campus": campus, "total_free": total, "free_rooms": free[:300], "truncated": total > 300, **out}
+
+
+BELL_SLOTS = (
+    (1, "09:00", "10:30"),
+    (2, "10:40", "12:10"),
+    (3, "12:40", "14:10"),
+    (4, "14:20", "15:50"),
+    (5, "16:20", "17:50"),
+    (6, "18:00", "19:30"),
+    (7, "19:40", "21:10"),
+    (8, "21:20", "22:50"),
+)
+
+
+def _bell_pair(start_hm: str) -> int | None:
+    for num, s_start, _ in BELL_SLOTS:
+        if s_start == start_hm:
+            return num
+    return None
+
+
+async def teacher_lessons(cookies: dict, date: str | None = None) -> dict:
+    day = _start_of(date, "date")
+    api = MireaGrades(session_cookies=cookies)
+    try:
+        raw_lessons, err = await api.get_my_lessons_for_date(day.year, day.month, day.day)
+    finally:
+        await api.close()
+    if err:
+        raise _fail(err)
+    lessons = sorted(raw_lessons or [], key=lambda l: l.get("start_epoch") or 0)
+    items = []
+    for idx, l in enumerate(lessons):
+        st = l.get("start_epoch") or 0
+        et = l.get("end_epoch") or 0
+        start_dt = datetime.fromtimestamp(st, MSK) if st else None
+        end_dt = datetime.fromtimestamp(et, MSK) if et else None
+        shm = start_dt.strftime("%H:%M") if start_dt else ""
+        ehm = end_dt.strftime("%H:%M") if end_dt else ""
+        time_str = f"{shm} - {ehm}" if shm and ehm else ""
+        bell = _bell_pair(shm)
+        groups = [v["title"] for v in l.get("visiting_logs", []) if v.get("title")]
+        v_ids = [v["id"] for v in l.get("visiting_logs", []) if v.get("id")]
+        items.append({
+            "order": idx + 1,
+            "pair_number": bell or (idx + 1),
+            "time": time_str,
+            "discipline": l.get("discipline") or "",
+            "lesson_type": l.get("lesson_type") or "",
+            "auditoriums": l.get("auditoriums") or [],
+            "groups": groups,
+            "lesson_id": l.get("id") or "",
+            "visiting_log_ids": v_ids,
+        })
+    return {"date": day.date().isoformat(), "count": len(items), "lessons": items}
+
+
+async def teacher_lesson_students(cookies: dict, lesson_id: str, visiting_log_id: str | None = None) -> dict:
+    lid = (lesson_id or "").strip()
+    if not lid:
+        raise ServiceError("Укажите lesson_id.")
+
+    api = MireaGrades(session_cookies=cookies)
+    try:
+        vlogs = []
+        if visiting_log_id:
+            vlogs = [{"id": visiting_log_id.strip(), "title": ""}]
+        else:
+            now = datetime.now(MSK)
+            found_lesson = None
+            for day_offset in (0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5, -6, 6, -7, 7):
+                d = now + timedelta(days=day_offset)
+                day_lessons, _ = await api.get_my_lessons_for_date(d.year, d.month, d.day)
+                if day_lessons:
+                    for l in day_lessons:
+                        if l.get("id") == lid:
+                            found_lesson = l
+                            break
+                if found_lesson:
+                    break
+            if found_lesson and found_lesson.get("visiting_logs"):
+                vlogs = found_lesson["visiting_logs"]
+
+        if not vlogs:
+            raise ServiceError(f"Для занятия {lid} не удалось определить visiting_log_id. Укажите его явно.")
+
+        all_students = []
+        seen_ids = set()
+        for v in vlogs:
+            v_id = v["id"]
+            group_title = v.get("title") or ""
+            students, err = await api.get_attendance_for_lesson(lid, v_id)
+            if err:
+                raise _fail(err)
+            for s in (students or []):
+                sid = s.get("student_id")
+                if sid and sid not in seen_ids:
+                    seen_ids.add(sid)
+                    all_students.append({
+                        "student_id": sid,
+                        "fullname": s.get("fullname") or "",
+                        "status": s.get("status") or "none",
+                        "group": group_title,
+                        "attendance_id": s.get("attendance_id") or "",
+                    })
+    finally:
+        await api.close()
+
+    return {
+        "lesson_id": lid,
+        "total_students": len(all_students),
+        "students": all_students,
+    }
+
+
+def _match_student_by_name(name_query: str, students: list[dict]) -> dict:
+    query = (name_query or "").strip().casefold()
+    if not query:
+        raise ServiceError("Пустое имя студента в отметках.")
+
+    q_parts = [p for p in re.split(r"[\s,\.-]+", query) if p]
+    exact = []
+    prefix = []
+
+    for s in students:
+        fn = (s.get("fullname") or "").casefold()
+        fn_parts = [p for p in re.split(r"[\s,\.-]+", fn) if p]
+        if fn == query:
+            exact.append(s)
+            continue
+        if all(any(sp.startswith(qp) for sp in fn_parts) for qp in q_parts):
+            prefix.append(s)
+
+    candidates = exact if exact else prefix
+    if not candidates:
+        raise ServiceError(f"Студент «{name_query}» не найден среди студентов занятия.")
+    if len(candidates) > 1:
+        names = "; ".join(c.get("fullname", "") for c in candidates)
+        raise ServiceError(f"Под «{name_query}» подходит несколько студентов: {names}. Уточните ФИО.")
+    return candidates[0]
+
+
+def _resolve_attend_type(val: Any) -> int:
+    s = str(val or "").strip().lower()
+    if s in ("present", "+", "был", "присутствовал", "присутствие", "3", "true"):
+        return 3
+    if s in ("absent", "н", "n", "отсутствовал", "отсутствие", "1", "false"):
+        return 1
+    if s in ("clear", "none", "0", "сброс", "удалить", ""):
+        return 0
+    raise ServiceError(f"Неизвестный статус отметки «{val}». Ожидается: 'present' (+), 'absent' (Н) или 'clear'.")
+
+
+async def teacher_mark_attendance(
+    cookies: dict, lesson_id: str, marks: list[dict], visiting_log_id: str | None = None
+) -> dict:
+    lid = (lesson_id or "").strip()
+    if not lid:
+        raise ServiceError("Укажите lesson_id.")
+    if not marks:
+        raise ServiceError("Список отметок marks пуст.")
+
+    roster_data = await teacher_lesson_students(cookies, lid, visiting_log_id)
+    students_roster = roster_data.get("students", [])
+    roster_by_sid = {s["student_id"]: s for s in students_roster if s.get("student_id")}
+
+    resolved_records = []
+    marks_summary = []
+    for m in marks:
+        sid = m.get("student_id")
+        student_name = m.get("name") or m.get("student")
+        att_id = m.get("attendance_id")
+        if not sid:
+            matched = _match_student_by_name(str(student_name or ""), students_roster)
+            sid = matched["student_id"]
+            student_name = matched["fullname"]
+            att_id = matched.get("attendance_id")
+        elif not att_id and sid in roster_by_sid:
+            att_id = roster_by_sid[sid].get("attendance_id")
+            if not student_name:
+                student_name = roster_by_sid[sid].get("fullname")
+
+        attend_type = _resolve_attend_type(m.get("status"))
+        status_label = "present" if attend_type == 3 else ("absent" if attend_type == 1 else "clear")
+        record = {"student_id": sid, "attend_type": attend_type}
+        if att_id:
+            record["attendance_id"] = att_id
+        resolved_records.append(record)
+        marks_summary.append({
+            "student": student_name or sid,
+            "student_id": sid,
+            "status": status_label,
+            "attend_type": attend_type,
+        })
+
+    api = MireaGrades(session_cookies=cookies)
+    try:
+        ok, err = await api.update_attendance(lid, resolved_records)
+    finally:
+        await api.close()
+    if not ok:
+        raise _fail(err or "Не удалось обновить посещаемость")
+
+    return {
+        "success": True,
+        "lesson_id": lid,
+        "updated_count": len(resolved_records),
+        "marks": marks_summary,
+    }
